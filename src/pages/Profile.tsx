@@ -6,13 +6,17 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
-import { 
-  Mail, 
-  Phone, 
-  Camera, 
-  Save, 
-  Key, 
-  Building
+import {
+  Mail,
+  Phone,
+  Camera,
+  Save,
+  Key,
+  Building,
+  Trash2,
+  Eye,
+  EyeOff,
+  Lock
 } from 'lucide-react';
 
 // Zod schemas
@@ -34,12 +38,16 @@ type ProfileFormValues = z.infer<typeof profileSchema>;
 type PasswordFormValues = z.infer<typeof passwordSchema>;
 
 export const Profile: React.FC = () => {
-  const { user } = useAuth();
+  const { user, logout } = useAuth();
   const { showToast } = useToast();
   const queryClient = useQueryClient();
 
   const [emailInput, setEmailInput] = useState('');
   const [isUploading, setIsUploading] = useState(false);
+  const [showOldPassword, setShowOldPassword] = useState(false);
+  const [showNewPassword, setShowNewPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  const [isLightboxOpen, setIsLightboxOpen] = useState(false);
 
   // 1. Fetch User details
   const { data: userDetail, isLoading: isUserLoading } = useQuery({
@@ -53,8 +61,8 @@ export const Profile: React.FC = () => {
   });
 
   // Profile forms hook
-  const { 
-    register: profileRegister, 
+  const {
+    register: profileRegister,
     handleSubmit: handleProfileSubmit,
     formState: { errors: profileErrors }
   } = useForm<ProfileFormValues>({
@@ -83,7 +91,7 @@ export const Profile: React.FC = () => {
       const formData = new FormData();
       formData.append('fullName', data.fullName);
       formData.append('phone', data.phone);
-      
+
       await apiClient.patch(`/user/${user.id}`, formData, {
         headers: { 'Content-Type': 'multipart/form-data' }
       });
@@ -130,6 +138,30 @@ export const Profile: React.FC = () => {
     }
   });
 
+  // LOCK SELF MUTATION
+  const lockSelfMutation = useMutation({
+    mutationFn: async () => {
+      if (!user?.id) return;
+      await apiClient.patch(`/user/lock/${user.id}`);
+    },
+    onSuccess: () => {
+      showToast('Tài khoản của bạn đã được khóa thành công. Đang đăng xuất...', 'success');
+      setTimeout(() => {
+        logout();
+      }, 1500);
+    },
+    onError: (err: any) => {
+      const msg = err.response?.data?.message || 'Không thể khóa tài khoản';
+      showToast(msg, 'error');
+    }
+  });
+
+  const handleSelfLock = () => {
+    if (window.confirm('Bạn có chắc chắn muốn TẠM KHÓA tài khoản của mình? Bạn sẽ bị đăng xuất ngay lập tức và phải liên hệ Admin để mở khóa lại.')) {
+      lockSelfMutation.mutate();
+    }
+  };
+
   // UPLOAD AVATAR WORKFLOW
   const handleAvatarUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -139,18 +171,39 @@ export const Profile: React.FC = () => {
     try {
       // Step 1: Request signature
       const signatureResponse = await apiClient.post(`/user/${user.id}/avatar/upload-signature`);
-      const { publicId, cloudName } = signatureResponse.data?.data || {};
+      const { signature, cloud_name, api_key, timestamp, public_id, overwrite } = signatureResponse.data?.data || {};
 
-      // Prototype Simulation of Cloudinary uploading
-      showToast('Đang mô phỏng tải ảnh lên Cloudinary...', 'info');
-      await new Promise((r) => setTimeout(r, 1500));
+      if (!signature || !cloud_name || !api_key || !timestamp || !public_id) {
+        throw new Error('Không nhận được thông tin chữ ký hợp lệ từ máy chủ');
+      }
 
-      const mockImageUrl = `https://res.cloudinary.com/${cloudName || 'demo'}/image/upload/v1/${publicId || 'avatar'}.png`;
+      // Step 2: Upload directly to Cloudinary
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('api_key', api_key);
+      formData.append('timestamp', timestamp.toString());
+      formData.append('signature', signature);
+      formData.append('public_id', public_id);
+      formData.append('overwrite', overwrite ? 'true' : 'false');
 
-      // Step 2: Update avatar url in backend
+      const cloudinaryUrl = `https://api.cloudinary.com/v1_1/${cloud_name}/image/upload`;
+      const uploadResponse = await fetch(cloudinaryUrl, {
+        method: 'POST',
+        body: formData
+      });
+
+      if (!uploadResponse.ok) {
+        const errorData = await uploadResponse.json();
+        throw new Error(errorData.error?.message || 'Không thể tải ảnh lên Cloudinary');
+      }
+
+      const uploadResult = await uploadResponse.json();
+      const realImageUrl = uploadResult.secure_url;
+
+      // Step 3: Update avatar url in backend
       await apiClient.patch(`/user/${user.id}/avatar/upload`, {
-        publicId: publicId || 'avatar_mock',
-        url: mockImageUrl
+        avtUrlId: public_id,
+        avtUrl: realImageUrl
       });
 
       queryClient.invalidateQueries({ queryKey: ['user', 'detail'] });
@@ -159,6 +212,28 @@ export const Profile: React.FC = () => {
       showToast(err.message || 'Lỗi tải ảnh đại diện lên', 'error');
     } finally {
       setIsUploading(false);
+    }
+  };
+
+  // DELETE AVATAR MUTATION
+  const deleteAvatarMutation = useMutation({
+    mutationFn: async () => {
+      if (!user?.id) return;
+      await apiClient.delete(`/user/${user.id}/avatar`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['user', 'detail'] });
+      showToast('Đã xóa ảnh đại diện thành công', 'success');
+    },
+    onError: (err: any) => {
+      const msg = err.response?.data?.message || 'Không thể xóa ảnh đại diện';
+      showToast(msg, 'error');
+    }
+  });
+
+  const handleDeleteAvatar = () => {
+    if (window.confirm('Bạn có chắc chắn muốn xóa ảnh đại diện?')) {
+      deleteAvatarMutation.mutate();
     }
   };
 
@@ -179,7 +254,7 @@ export const Profile: React.FC = () => {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
-      
+
       {/* Page Header */}
       <div>
         <h2 style={{ fontSize: '1.5rem', fontWeight: 700, margin: 0 }}>Cài đặt tài khoản</h2>
@@ -187,35 +262,66 @@ export const Profile: React.FC = () => {
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '2rem' }} className="grid-cols-2">
-        
+
         {/* Left column: Profile card */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
-          
+
           {/* Avatar and Basic details panel */}
           <section className="glass-card" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '1.5rem', textAlign: 'center' }}>
             <div style={{ position: 'relative' }}>
-              <div style={{
-                width: '100px',
-                height: '100px',
-                borderRadius: '50%',
-                backgroundColor: 'var(--bg-tertiary)',
-                color: 'var(--accent)',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                fontWeight: 700,
-                fontSize: '2.5rem',
-                border: '3px solid var(--accent)',
-                boxShadow: 'var(--shadow-md)',
-                overflow: 'hidden'
-              }}>
+              <div 
+                onClick={() => userDetail?.avatarUrl && setIsLightboxOpen(true)}
+                style={{
+                  width: '100px',
+                  height: '100px',
+                  borderRadius: '50%',
+                  backgroundColor: 'var(--bg-tertiary)',
+                  color: 'var(--accent)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  fontWeight: 700,
+                  fontSize: '2.5rem',
+                  border: '3px solid var(--accent)',
+                  boxShadow: 'var(--shadow-md)',
+                  overflow: 'hidden',
+                  cursor: userDetail?.avatarUrl ? 'pointer' : 'default'
+                }}
+                title={userDetail?.avatarUrl ? "Xem ảnh chi tiết" : undefined}
+              >
                 {userDetail?.avatarUrl ? (
                   <img src={userDetail.avatarUrl} alt="Avatar" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                 ) : (
                   userDetail?.fullName?.substring(0, 2).toUpperCase() || 'US'
                 )}
               </div>
-              <label 
+              {userDetail?.avatarUrl && (
+                <button
+                  type="button"
+                  onClick={handleDeleteAvatar}
+                  style={{
+                    position: 'absolute',
+                    bottom: 0,
+                    left: 0,
+                    backgroundColor: 'var(--danger)',
+                    color: '#fff',
+                    width: '32px',
+                    height: '32px',
+                    borderRadius: '50%',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    cursor: 'pointer',
+                    boxShadow: 'var(--shadow-sm)',
+                    border: '2px solid var(--bg-secondary)',
+                    transition: 'all var(--transition-fast)'
+                  }}
+                  title="Xóa ảnh đại diện"
+                >
+                  <Trash2 size={14} />
+                </button>
+              )}
+              <label
                 htmlFor="avatar-input"
                 style={{
                   position: 'absolute',
@@ -239,11 +345,11 @@ export const Profile: React.FC = () => {
               >
                 <Camera size={14} />
               </label>
-              <input 
+              <input
                 id="avatar-input"
-                type="file" 
-                accept="image/*" 
-                style={{ display: 'none' }} 
+                type="file"
+                accept="image/*"
+                style={{ display: 'none' }}
                 onChange={handleAvatarUpload}
                 disabled={isUploading}
               />
@@ -277,13 +383,13 @@ export const Profile: React.FC = () => {
           {/* Edit info Form */}
           <section className="glass-card">
             <h3 style={{ fontSize: '1.1rem', fontWeight: 700, marginBottom: '1.25rem', color: 'var(--text-primary)' }}>Thông tin cá nhân</h3>
-            
+
             <form onSubmit={handleProfileSubmit(handleSaveProfile)} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
               <div className="form-group">
                 <label className="form-label" htmlFor="profile-fullname">Họ và tên *</label>
-                <input 
+                <input
                   id="profile-fullname"
-                  className="form-control" 
+                  className="form-control"
                   placeholder="Nhập họ và tên..."
                   {...profileRegister('fullName')}
                 />
@@ -292,9 +398,9 @@ export const Profile: React.FC = () => {
 
               <div className="form-group">
                 <label className="form-label" htmlFor="profile-phone">Số điện thoại *</label>
-                <input 
+                <input
                   id="profile-phone"
-                  className="form-control" 
+                  className="form-control"
                   placeholder="Nhập số điện thoại..."
                   {...profileRegister('phone')}
                 />
@@ -310,7 +416,7 @@ export const Profile: React.FC = () => {
 
         {/* Right column: Credentials & Email changes */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
-          
+
           {/* Request email change */}
           <section className="glass-card">
             <h3 style={{ fontSize: '1.1rem', fontWeight: 700, marginBottom: '0.5rem', color: 'var(--text-primary)' }}>Thay đổi địa chỉ Email</h3>
@@ -325,11 +431,11 @@ export const Profile: React.FC = () => {
                   <span style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-tertiary)' }}>
                     <Mail size={16} />
                   </span>
-                  <input 
+                  <input
                     id="profile-new-email"
-                    type="email" 
-                    className="form-control" 
-                    style={{ width: '100%', paddingLeft: '2.5rem' }} 
+                    type="email"
+                    className="form-control"
+                    style={{ width: '100%', paddingLeft: '2.5rem' }}
                     placeholder="email_moi@company.com"
                     value={emailInput}
                     onChange={(e) => setEmailInput(e.target.value)}
@@ -354,47 +460,144 @@ export const Profile: React.FC = () => {
             <form onSubmit={handlePassSubmit(handleSavePassword)} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
               <div className="form-group">
                 <label className="form-label" htmlFor="pass-old">Mật khẩu hiện tại *</label>
-                <input 
-                  id="pass-old"
-                  type="password" 
-                  className="form-control" 
-                  placeholder="••••••••" 
-                  {...passRegister('oldPassword')}
-                />
+                <div style={{ position: 'relative' }}>
+                  <input
+                    id="pass-old"
+                    type={showOldPassword ? 'text' : 'password'}
+                    className="form-control"
+                    style={{ width: '100%', paddingRight: '2.5rem' }}
+                    placeholder="••••••••"
+                    {...passRegister('oldPassword')}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowOldPassword(!showOldPassword)}
+                    style={{ position: 'absolute', right: '12px', top: '50%', transform: 'translateY(-50%)', border: 'none', background: 'none', color: 'var(--text-tertiary)', cursor: 'pointer', display: 'flex', alignItems: 'center', padding: 0 }}
+                    title={showOldPassword ? 'Ẩn mật khẩu' : 'Hiện mật khẩu'}
+                  >
+                    {showOldPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                  </button>
+                </div>
                 {passErrors.oldPassword && <span className="form-error">{passErrors.oldPassword.message}</span>}
               </div>
 
               <div className="form-group">
                 <label className="form-label" htmlFor="pass-new">Mật khẩu mới *</label>
-                <input 
-                  id="pass-new"
-                  type="password" 
-                  className="form-control" 
-                  placeholder="••••••••" 
-                  {...passRegister('newPassword')}
-                />
+                <div style={{ position: 'relative' }}>
+                  <input
+                    id="pass-new"
+                    type={showNewPassword ? 'text' : 'password'}
+                    className="form-control"
+                    style={{ width: '100%', paddingRight: '2.5rem' }}
+                    placeholder="••••••••"
+                    {...passRegister('newPassword')}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowNewPassword(!showNewPassword)}
+                    style={{ position: 'absolute', right: '12px', top: '50%', transform: 'translateY(-50%)', border: 'none', background: 'none', color: 'var(--text-tertiary)', cursor: 'pointer', display: 'flex', alignItems: 'center', padding: 0 }}
+                    title={showNewPassword ? 'Ẩn mật khẩu' : 'Hiện mật khẩu'}
+                  >
+                    {showNewPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                  </button>
+                </div>
                 {passErrors.newPassword && <span className="form-error">{passErrors.newPassword.message}</span>}
               </div>
 
               <div className="form-group">
                 <label className="form-label" htmlFor="pass-confirm">Xác nhận mật khẩu mới *</label>
-                <input 
-                  id="pass-confirm"
-                  type="password" 
-                  className="form-control" 
-                  placeholder="••••••••" 
-                  {...passRegister('confirmPassword')}
-                />
+                <div style={{ position: 'relative' }}>
+                  <input
+                    id="pass-confirm"
+                    type={showConfirmPassword ? 'text' : 'password'}
+                    className="form-control"
+                    style={{ width: '100%', paddingRight: '2.5rem' }}
+                    placeholder="••••••••"
+                    {...passRegister('confirmPassword')}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                    style={{ position: 'absolute', right: '12px', top: '50%', transform: 'translateY(-50%)', border: 'none', background: 'none', color: 'var(--text-tertiary)', cursor: 'pointer', display: 'flex', alignItems: 'center', padding: 0 }}
+                    title={showConfirmPassword ? 'Ẩn mật khẩu' : 'Hiện mật khẩu'}
+                  >
+                    {showConfirmPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                  </button>
+                </div>
                 {passErrors.confirmPassword && <span className="form-error">{passErrors.confirmPassword.message}</span>}
               </div>
 
               <button type="submit" className="btn btn-secondary" style={{ width: '100%' }} disabled={changePasswordMutation.isPending}>
-                <Key size={16} /> Gửi yêu cầu Đổi mật khẩu
+                <Key size={16} /> Xác nhận đổi mật khẩu
               </button>
             </form>
           </section>
+
+          {/* Vô hiệu hóa tài khoản */}
+          <section className="glass-card" style={{ borderLeft: '4px solid var(--danger)' }}>
+            <h3 style={{ fontSize: '1.1rem', fontWeight: 700, marginBottom: '0.5rem', color: 'var(--danger)' }}>Tạm khóa tài khoản</h3>
+            <p style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)', marginBottom: '1.25rem' }}>
+              Tạm thời vô hiệu hóa tài khoản hoạt động. Bạn sẽ bị đăng xuất ngay lập tức và cần liên hệ Quản trị viên để mở khóa lại.
+            </p>
+            <button 
+              type="button" 
+              className="btn" 
+              style={{ width: '100%', backgroundColor: 'var(--danger)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem', border: 'none', padding: '0.6rem', borderRadius: 'var(--radius)' }} 
+              onClick={handleSelfLock}
+              disabled={lockSelfMutation.isPending}
+            >
+              <Lock size={16} /> {lockSelfMutation.isPending ? 'Đang khóa...' : 'Khóa tài khoản cá nhân'}
+            </button>
+          </section>
         </div>
       </div>
+      {isLightboxOpen && userDetail?.avatarUrl && (
+        <div 
+          className="modal-overlay" 
+          onClick={() => setIsLightboxOpen(false)}
+          style={{
+            zIndex: 9999,
+            backgroundColor: 'rgba(0, 0, 0, 0.85)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            backdropFilter: 'blur(8px)'
+          }}
+        >
+          <div 
+            style={{ position: 'relative', maxWidth: '90%', maxHeight: '90%' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <img 
+              src={userDetail.avatarUrl} 
+              alt="Avatar Full Detail" 
+              style={{
+                maxWidth: '100%',
+                maxHeight: '80vh',
+                borderRadius: 'var(--radius-lg)',
+                boxShadow: 'var(--shadow-2xl)',
+                border: '4px solid rgba(255, 255, 255, 0.15)',
+                objectFit: 'contain'
+              }} 
+            />
+            <button
+              onClick={() => setIsLightboxOpen(false)}
+              className="btn btn-ghost"
+              style={{
+                position: 'absolute',
+                top: '-40px',
+                right: '0',
+                color: '#fff',
+                padding: '4px',
+                fontSize: '1.2rem',
+                minWidth: 'auto'
+              }}
+            >
+              Đóng
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

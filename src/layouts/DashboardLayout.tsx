@@ -9,6 +9,7 @@ import {
   Calendar, 
   DoorOpen, 
   User, 
+  Users,
   Bell, 
   LogOut, 
   Sun, 
@@ -24,7 +25,7 @@ interface DashboardLayoutProps {
 }
 
 export const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
-  const { user, logout } = useAuth();
+  const { user, logout, hasRole } = useAuth();
   const { showToast } = useToast();
   const navigate = useNavigate();
   const location = useLocation();
@@ -113,6 +114,9 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) =>
     { name: 'Dashboard', path: '/', icon: <Home size={18} /> },
     { name: 'Lịch Đặt Phòng', path: '/bookings', icon: <Calendar size={18} /> },
     { name: 'Phòng Họp', path: '/rooms', icon: <DoorOpen size={18} /> },
+    ...(hasRole('ADMIN') ? [
+      { name: 'Quản lý Nhân Viên', path: '/users', icon: <Users size={18} /> }
+    ] : []),
     { name: 'Hồ Sơ Cá Nhân', path: '/profile', icon: <User size={18} /> },
   ];
 

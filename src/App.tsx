@@ -10,6 +10,7 @@ import { Bookings } from './pages/Bookings';
 import { Rooms } from './pages/Rooms';
 import { Profile } from './pages/Profile';
 import { Verify } from './pages/Verify';
+import { Users } from './pages/Users';
 
 // Create TanStack Query Client
 const queryClient = new QueryClient({
@@ -128,6 +129,14 @@ function App() {
                 element={
                   <ProtectedRoute>
                     <Profile />
+                  </ProtectedRoute>
+                } 
+              />
+              <Route 
+                path="/users" 
+                element={
+                  <ProtectedRoute>
+                    <Users />
                   </ProtectedRoute>
                 } 
               />
