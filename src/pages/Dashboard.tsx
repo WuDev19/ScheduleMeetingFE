@@ -1,0 +1,417 @@
+import React, { useState } from 'react';
+import { useNavigate, Link } from 'react-router-dom';
+import { useAuth } from '../context/AuthContext';
+import { useToast } from '../context/ToastContext';
+import { apiClient } from '../api/client';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { 
+  Calendar, 
+  DoorOpen, 
+  Users, 
+  Clock, 
+  CheckCircle, 
+  XCircle, 
+  ArrowRight, 
+  Briefcase,
+  AlertCircle 
+} from 'lucide-react';
+
+export const Dashboard: React.FC = () => {
+  const { user, hasAuthority } = useAuth();
+  const { showToast } = useToast();
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
+
+  const [approveComment, setApproveComment] = useState('');
+  const [rejectReason, setRejectReason] = useState('');
+  const [selectedBookingId, setSelectedBookingId] = useState<number | null>(null);
+  const [activeModal, setActiveModal] = useState<'approve' | 'reject' | null>(null);
+
+  // 1. Fetch My Bookings (Filtered by email / user Booked)
+  const { data: myBookings, isLoading: isMyBookingsLoading } = useQuery({
+    queryKey: ['bookings', 'my-upcoming'],
+    queryFn: async () => {
+      // Fetch bookings list; in a real scenario we use filter. Let's hit `/booking/filter`
+      const response = await apiClient.get('/booking/filter');
+      // Sort by start time and get upcoming ones
+      const list = response.data?.data || [];
+      const now = new Date();
+      return list
+        .filter((b: any) => new Date(b.endTime) > now)
+        .sort((a: any, b: any) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime())
+        .slice(0, 5); // limit to top 5
+    },
+    enabled: !!user,
+  });
+
+  // 2. Fetch Pending Bookings for Approvers
+  const isApprover = hasAuthority('BOOKING:APPROVE');
+  const { data: pendingBookings, isLoading: isPendingLoading } = useQuery({
+    queryKey: ['bookings', 'pending'],
+    queryFn: async () => {
+      const response = await apiClient.get('/booking/pending?page=0&size=10');
+      return response.data?.data?.content || [];
+    },
+    enabled: isApprover && !!user,
+  });
+
+  // 3. Fetch Rooms stats
+  const { data: roomsCount } = useQuery({
+    queryKey: ['rooms', 'count'],
+    queryFn: async () => {
+      const response = await apiClient.get('/room/all?page=0&size=1');
+      return response.data?.data?.totalElements || 0;
+    },
+    enabled: !!user,
+  });
+
+  // Approve booking mutation
+  const approveMutation = useMutation({
+    mutationFn: async ({ id, note }: { id: number; note: string }) => {
+      await apiClient.patch(`/booking/approve/${id}`, { note });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['bookings'] });
+      showToast('Đã duyệt lịch họp thành công', 'success');
+      setActiveModal(null);
+      setApproveComment('');
+    },
+    onError: (err: any) => {
+      const errMsg = err.response?.data?.message || 'Không thể duyệt lịch họp';
+      showToast(errMsg, 'error');
+    }
+  });
+
+  // Reject booking mutation
+  const rejectMutation = useMutation({
+    mutationFn: async ({ id, note }: { id: number; note: string }) => {
+      await apiClient.patch(`/booking/reject/${id}`, { note });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['bookings'] });
+      showToast('Đã từ chối lịch họp', 'success');
+      setActiveModal(null);
+      setRejectReason('');
+    },
+    onError: (err: any) => {
+      const errMsg = err.response?.data?.message || 'Không thể từ chối lịch họp';
+      showToast(errMsg, 'error');
+    }
+  });
+
+  const handleApproveClick = (id: number) => {
+    setSelectedBookingId(id);
+    setActiveModal('approve');
+  };
+
+  const handleRejectClick = (id: number) => {
+    setSelectedBookingId(id);
+    setActiveModal('reject');
+  };
+
+  const executeApprove = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (selectedBookingId) {
+      approveMutation.mutate({ id: selectedBookingId, note: approveComment });
+    }
+  };
+
+  const executeReject = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (selectedBookingId) {
+      rejectMutation.mutate({ id: selectedBookingId, note: rejectReason });
+    }
+  };
+
+  const formatDateTime = (dateStr: string) => {
+    const d = new Date(dateStr);
+    return `${d.toLocaleDateString('vi-VN')} lúc ${d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+  };
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
+      {/* Greetings section */}
+      <div>
+        <h2 style={{ fontSize: '1.75rem', fontWeight: 700, margin: 0 }}>Chào buổi làm việc, {user?.username}!</h2>
+        <p style={{ color: 'var(--text-tertiary)', fontSize: '0.9rem', marginTop: '0.25rem' }}>
+          Hôm nay bạn có {myBookings?.length || 0} lịch họp sắp diễn ra.
+        </p>
+      </div>
+
+      {/* Metrics Row */}
+      <div className="grid-cols-3">
+        <div className="glass-card" style={{ display: 'flex', alignItems: 'center', gap: '1.25rem' }}>
+          <div style={{
+            width: '48px',
+            height: '48px',
+            borderRadius: 'var(--radius-md)',
+            backgroundColor: 'var(--accent-light)',
+            color: 'var(--accent)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center'
+          }}>
+            <Calendar size={24} />
+          </div>
+          <div>
+            <span style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)', fontWeight: 600, textTransform: 'uppercase' }}>Lịch họp sắp tới</span>
+            <h3 style={{ fontSize: '1.5rem', fontWeight: 700, margin: 0, color: 'var(--text-primary)' }}>
+              {isMyBookingsLoading ? '...' : myBookings?.length || 0}
+            </h3>
+          </div>
+        </div>
+
+        <div className="glass-card" style={{ display: 'flex', alignItems: 'center', gap: '1.25rem' }}>
+          <div style={{
+            width: '48px',
+            height: '48px',
+            borderRadius: 'var(--radius-md)',
+            backgroundColor: 'rgba(16, 185, 129, 0.08)',
+            color: 'var(--success)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center'
+          }}>
+            <DoorOpen size={24} />
+          </div>
+          <div>
+            <span style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)', fontWeight: 600, textTransform: 'uppercase' }}>Tổng số phòng họp</span>
+            <h3 style={{ fontSize: '1.5rem', fontWeight: 700, margin: 0, color: 'var(--text-primary)' }}>
+              {roomsCount || 0}
+            </h3>
+          </div>
+        </div>
+
+        <div className="glass-card" style={{ display: 'flex', alignItems: 'center', gap: '1.25rem' }}>
+          <div style={{
+            width: '48px',
+            height: '48px',
+            borderRadius: 'var(--radius-md)',
+            backgroundColor: 'rgba(14, 165, 233, 0.08)',
+            color: 'var(--info)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center'
+          }}>
+            <Briefcase size={24} />
+          </div>
+          <div>
+            <span style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)', fontWeight: 600, textTransform: 'uppercase' }}>Bộ phận của bạn</span>
+            <h3 style={{ fontSize: '1.15rem', fontWeight: 700, margin: 0, color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+              {user?.roles?.includes('ADMIN') ? 'Ban Quản Trị' : 'Phòng Nhân Sự'}
+            </h3>
+          </div>
+        </div>
+      </div>
+
+      {/* Main Grid: My Bookings & Approver panel */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
+        
+        {/* Approvals (Only visible to Approver/Admin role) */}
+        {isApprover && (
+          <section className="glass-card" style={{ borderLeft: '4px solid var(--warning)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
+              <h3 style={{ fontSize: '1.15rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <Clock size={20} style={{ color: 'var(--warning)' }} />
+                Yêu cầu chờ duyệt ({pendingBookings?.length || 0})
+              </h3>
+            </div>
+
+            {isPendingLoading ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                <div className="skeleton" style={{ height: '70px', width: '100%' }} />
+                <div className="skeleton" style={{ height: '70px', width: '100%' }} />
+              </div>
+            ) : pendingBookings?.length === 0 ? (
+              <div style={{ padding: '1.5rem', textAlign: 'center', color: 'var(--text-tertiary)', fontSize: '0.9rem' }}>
+                Tuyệt vời! Không có yêu cầu nào đang chờ xử lý.
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                {pendingBookings?.map((item: any) => (
+                  <div 
+                    key={item.id}
+                    style={{
+                      display: 'flex',
+                      flexWrap: 'wrap',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      padding: '1rem',
+                      borderRadius: 'var(--radius-md)',
+                      backgroundColor: 'var(--bg-primary)',
+                      border: '1px solid var(--border-light)',
+                      gap: '1rem'
+                    }}
+                  >
+                    <div>
+                      <h4 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 600, color: 'var(--text-primary)' }}>{item.title}</h4>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '1rem', marginTop: '0.25rem', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                        <span>Phòng: <strong>{item.roomName}</strong> (Tầng {item.floorNumber})</span>
+                        <span>Người đặt: <strong>{item.userBooked}</strong></span>
+                        <span>Thời gian: {formatDateTime(item.startTime)}</span>
+                      </div>
+                    </div>
+
+                    <div style={{ display: 'flex', gap: '0.5rem' }}>
+                      <button 
+                        onClick={() => handleApproveClick(item.id)}
+                        className="btn" 
+                        style={{ backgroundColor: 'var(--success)', color: '#fff', fontSize: '0.8rem', padding: '0.5rem 0.875rem' }}
+                      >
+                        <CheckCircle size={14} /> Duyệt
+                      </button>
+                      <button 
+                        onClick={() => handleRejectClick(item.id)}
+                        className="btn" 
+                        style={{ backgroundColor: 'var(--danger)', color: '#fff', fontSize: '0.8rem', padding: '0.5rem 0.875rem' }}
+                      >
+                        <XCircle size={14} /> Từ chối
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
+        )}
+
+        {/* My upcoming meetings */}
+        <section className="glass-card">
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
+            <h3 style={{ fontSize: '1.15rem', fontWeight: 700 }}>Lịch họp cá nhân sắp tới</h3>
+            <Link to="/bookings" style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', fontSize: '0.825rem', fontWeight: 600 }}>
+              Xem toàn bộ lịch <ArrowRight size={16} />
+            </Link>
+          </div>
+
+          {isMyBookingsLoading ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+              <div className="skeleton" style={{ height: '60px', width: '100%' }} />
+              <div className="skeleton" style={{ height: '60px', width: '100%' }} />
+              <div className="skeleton" style={{ height: '60px', width: '100%' }} />
+            </div>
+          ) : myBookings?.length === 0 ? (
+            <div style={{ padding: '3rem 1rem', textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '1rem' }}>
+              <AlertCircle size={40} style={{ color: 'var(--text-tertiary)' }} />
+              <div>
+                <p style={{ margin: 0, fontWeight: 600, color: 'var(--text-primary)' }}>Không có lịch họp nào sắp diễn ra</p>
+                <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--text-tertiary)' }}>Bạn có muốn lên lịch họp mới không?</p>
+              </div>
+              <Link to="/bookings" className="btn btn-primary" style={{ fontSize: '0.8rem', padding: '0.5rem 1rem' }}>
+                Đăng ký họp ngay
+              </Link>
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+              {myBookings?.map((item: any) => (
+                <div 
+                  key={item.id}
+                  onClick={() => navigate(`/bookings?bookingId=${item.id}`)}
+                  className="glass-card-hover"
+                  style={{
+                    padding: '1rem',
+                    borderRadius: 'var(--radius-md)',
+                    border: '1px solid var(--border-light)',
+                    backgroundColor: 'var(--bg-secondary)',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    transition: 'all var(--transition-fast)'
+                  }}
+                >
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                    <h4 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 600, color: 'var(--text-primary)' }}>{item.title}</h4>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '1rem', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                      <span style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                        <DoorOpen size={14} /> {item.roomName} ({item.roomAddress || 'Tầng ' + item.floorNumber})
+                      </span>
+                      <span style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                        <Clock size={14} /> {formatDateTime(item.startTime)}
+                      </span>
+                      <span style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                        <Users size={14} /> {item.attendee} người tham gia
+                      </span>
+                    </div>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    {/* Visual Badge represent booking status */}
+                    <span className="badge badge-approved">Đã duyệt</span>
+                    <ArrowRight size={16} style={{ color: 'var(--text-tertiary)' }} />
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+      </div>
+
+      {/* APPROVE COMMENT MODAL */}
+      {activeModal === 'approve' && (
+        <div className="modal-overlay">
+          <form onSubmit={executeApprove} className="modal-content">
+            <div className="modal-header">
+              <h3 style={{ margin: 0, fontSize: '1.15rem' }}>Duyệt yêu cầu họp</h3>
+              <button type="button" className="btn btn-ghost" style={{ padding: '4px', minWidth: 'auto' }} onClick={() => setActiveModal(null)}>
+                <XCircle size={20} />
+              </button>
+            </div>
+            <div className="modal-body">
+              <div className="form-group">
+                <label className="form-label" htmlFor="approve-note">Ghi chú duyệt lịch họp (không bắt buộc)</label>
+                <textarea 
+                  id="approve-note"
+                  className="form-control"
+                  style={{ minHeight: '100px', resize: 'vertical' }}
+                  placeholder="Ví dụ: Đồng ý cấp phòng họp..."
+                  value={approveComment}
+                  onChange={(e) => setApproveComment(e.target.value)}
+                />
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button type="button" className="btn btn-secondary" onClick={() => setActiveModal(null)}>Hủy</button>
+              <button type="submit" className="btn" style={{ backgroundColor: 'var(--success)', color: '#fff' }} disabled={approveMutation.isPending}>
+                {approveMutation.isPending ? 'Đang duyệt...' : 'Đồng ý Duyệt'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {/* REJECT REASON MODAL */}
+      {activeModal === 'reject' && (
+        <div className="modal-overlay">
+          <form onSubmit={executeReject} className="modal-content">
+            <div className="modal-header">
+              <h3 style={{ margin: 0, fontSize: '1.15rem', color: 'var(--danger)' }}>Từ chối yêu cầu họp</h3>
+              <button type="button" className="btn btn-ghost" style={{ padding: '4px', minWidth: 'auto' }} onClick={() => setActiveModal(null)}>
+                <XCircle size={20} />
+              </button>
+            </div>
+            <div className="modal-body">
+              <div className="form-group">
+                <label className="form-label" htmlFor="reject-note">Lý do từ chối lịch họp (bắt buộc)</label>
+                <textarea 
+                  id="reject-note"
+                  required
+                  className="form-control"
+                  style={{ minHeight: '100px', resize: 'vertical' }}
+                  placeholder="Ví dụ: Trùng lịch sự kiện nội bộ / Thiếu thiết bị âm thanh..."
+                  value={rejectReason}
+                  onChange={(e) => setRejectReason(e.target.value)}
+                />
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button type="button" className="btn btn-secondary" onClick={() => setActiveModal(null)}>Hủy</button>
+              <button type="submit" className="btn btn-danger" disabled={rejectMutation.isPending}>
+                {rejectMutation.isPending ? 'Đang từ chối...' : 'Từ Chối Lịch'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+    </div>
+  );
+};
