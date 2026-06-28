@@ -335,29 +335,155 @@ export const Bookings: React.FC = () => {
     return r ? r.roomName : `Phòng #${id}`;
   };
 
-  const renderDiffRow = (label: string, oldValue: any, newValue: any, formatFn?: (val: any) => string) => {
-    const formattedOld = formatFn ? formatFn(oldValue) : String(oldValue ?? '');
-    const formattedNew = formatFn ? formatFn(newValue) : String(newValue ?? '');
+  const renderOldField = (label: string, oldVal: any, newVal: any, formatFn?: (val: any) => string) => {
+    const formattedOld = formatFn ? formatFn(oldVal) : String(oldVal ?? '');
+    const formattedNew = formatFn ? formatFn(newVal) : String(newVal ?? '');
     const isChanged = formattedOld !== formattedNew;
 
     return (
-      <tr style={{ borderBottom: '1px solid var(--border-light)' }}>
-        <td style={{ padding: '0.75rem 0.5rem', fontWeight: 600, color: 'var(--text-secondary)', fontSize: '0.85rem' }}>{label}</td>
-        {isChanged ? (
-          <>
-            <td style={{ padding: '0.75rem 0.5rem', color: 'var(--danger)', textDecoration: 'line-through', fontSize: '0.85rem', backgroundColor: 'rgba(239, 68, 68, 0.05)' }}>
-              {formattedOld || '(trống)'}
-            </td>
-            <td style={{ padding: '0.75rem 0.5rem', color: 'var(--success)', fontWeight: 600, fontSize: '0.85rem', backgroundColor: 'rgba(16, 185, 129, 0.05)' }}>
-              {formattedNew || '(trống)'}
-            </td>
-          </>
-        ) : (
-          <td colSpan={2} style={{ padding: '0.75rem 0.5rem', color: 'var(--text-primary)', fontSize: '0.85rem' }}>
-            {formattedNew || '(trống)'}
-          </td>
-        )}
-      </tr>
+      <div style={{
+        padding: '0.75rem',
+        borderRadius: 'var(--radius-md)',
+        backgroundColor: isChanged ? 'rgba(239, 68, 68, 0.08)' : 'rgba(255, 255, 255, 0.01)',
+        border: isChanged ? '1px solid rgba(239, 68, 68, 0.2)' : '1px solid rgba(255,255,255,0.03)',
+        color: isChanged ? 'var(--danger)' : 'var(--text-secondary)',
+        textDecoration: isChanged ? 'line-through' : 'none',
+        boxShadow: isChanged ? '0 4px 12px rgba(239, 68, 68, 0.05)' : 'none',
+        transition: 'all 0.2s ease'
+      }}>
+        <span style={{ fontSize: '0.75rem', display: 'block', fontWeight: 600, color: 'var(--text-tertiary)', textDecoration: 'none', marginBottom: '4px' }}>
+          {label} (Cũ)
+        </span>
+        <span style={{ fontSize: '0.95rem', fontWeight: isChanged ? 600 : 'normal' }}>
+          {formattedOld || '(trống)'}
+        </span>
+      </div>
+    );
+  };
+
+  const renderNewField = (label: string, oldVal: any, newVal: any, formatFn?: (val: any) => string) => {
+    const formattedOld = formatFn ? formatFn(oldVal) : String(oldVal ?? '');
+    const formattedNew = formatFn ? formatFn(newVal) : String(newVal ?? '');
+    const isChanged = formattedOld !== formattedNew;
+
+    return (
+      <div style={{
+        padding: '0.75rem',
+        borderRadius: 'var(--radius-md)',
+        backgroundColor: isChanged ? 'rgba(16, 185, 129, 0.08)' : 'rgba(255, 255, 255, 0.01)',
+        border: isChanged ? '1px solid rgba(16, 185, 129, 0.2)' : '1px solid rgba(255,255,255,0.03)',
+        color: isChanged ? 'var(--success)' : 'var(--text-primary)',
+        boxShadow: isChanged ? '0 4px 12px rgba(16, 185, 129, 0.05)' : 'none',
+        transition: 'all 0.2s ease'
+      }}>
+        <span style={{ fontSize: '0.75rem', display: 'block', fontWeight: 600, color: 'var(--text-tertiary)', marginBottom: '4px' }}>
+          {label} (Mới)
+        </span>
+        <span style={{ fontSize: '0.95rem', fontWeight: 600 }}>
+          {formattedNew || '(trống)'}
+        </span>
+      </div>
+    );
+  };
+
+  const renderSingleField = (label: string, value: any, formatFn?: (val: any) => string) => {
+    const formatted = formatFn ? formatFn(value) : String(value ?? '');
+    return (
+      <div style={{
+        padding: '0.75rem',
+        borderRadius: 'var(--radius-md)',
+        backgroundColor: 'rgba(255, 255, 255, 0.01)',
+        border: '1px solid rgba(255,255,255,0.03)'
+      }}>
+        <span style={{ fontSize: '0.75rem', display: 'block', fontWeight: 600, color: 'var(--text-tertiary)', marginBottom: '4px' }}>
+          {label}
+        </span>
+        <span style={{ fontSize: '0.95rem', color: 'var(--text-primary)', fontWeight: 600 }}>
+          {formatted || '(trống)'}
+        </span>
+      </div>
+    );
+  };
+
+  const renderOldEquipments = (history: any) => {
+    const oldEquips = history.oldData?.equipments || [];
+    const newEquips = history.newData?.equipments || [];
+    const allEquipIds = Array.from(new Set([
+      ...oldEquips.map((e: any) => e.equipmentId),
+      ...newEquips.map((e: any) => e.equipmentId)
+    ])).filter(Boolean);
+
+    if (allEquipIds.length === 0) return null;
+
+    return (
+      <div style={{ marginTop: '0.5rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+        <h5 style={{ margin: '0.5rem 0 0.25rem 0', fontSize: '0.85rem', fontWeight: 700, color: 'var(--text-secondary)' }}>
+          Thiết bị sử dụng:
+        </h5>
+        {allEquipIds.map((eqId: any) => {
+          const oldEq = oldEquips.find((e: any) => e.equipmentId === eqId);
+          const newEq = newEquips.find((e: any) => e.equipmentId === eqId);
+          const eqName = oldEq?.equipmentName || newEq?.equipmentName || `Thiết bị #${eqId}`;
+          const oldQty = oldEq?.usingQuantity || 0;
+          const newQty = newEq?.usingQuantity || 0;
+          const isChanged = oldQty !== newQty;
+
+          return (
+            <div key={eqId} style={{
+              padding: '0.6rem 0.75rem',
+              borderRadius: 'var(--radius-sm)',
+              backgroundColor: isChanged ? 'rgba(239, 68, 68, 0.08)' : 'rgba(255, 255, 255, 0.01)',
+              border: isChanged ? '1px solid rgba(239, 68, 68, 0.15)' : '1px solid transparent',
+              color: isChanged ? 'var(--danger)' : 'var(--text-secondary)',
+              textDecoration: isChanged ? 'line-through' : 'none',
+              fontSize: '0.875rem'
+            }}>
+              {eqName}: {oldQty ? `x${oldQty}` : 'Không sử dụng'}
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
+
+  const renderNewEquipments = (history: any) => {
+    const oldEquips = history.oldData?.equipments || [];
+    const newEquips = history.newData?.equipments || [];
+    const allEquipIds = Array.from(new Set([
+      ...oldEquips.map((e: any) => e.equipmentId),
+      ...newEquips.map((e: any) => e.equipmentId)
+    ])).filter(Boolean);
+
+    if (allEquipIds.length === 0) return null;
+
+    return (
+      <div style={{ marginTop: '0.5rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+        <h5 style={{ margin: '0.5rem 0 0.25rem 0', fontSize: '0.85rem', fontWeight: 700, color: 'var(--text-secondary)' }}>
+          Thiết bị sử dụng:
+        </h5>
+        {allEquipIds.map((eqId: any) => {
+          const oldEq = oldEquips.find((e: any) => e.equipmentId === eqId);
+          const newEq = newEquips.find((e: any) => e.equipmentId === eqId);
+          const eqName = newEq?.equipmentName || oldEq?.equipmentName || `Thiết bị #${eqId}`;
+          const oldQty = oldEq?.usingQuantity || 0;
+          const newQty = newEq?.usingQuantity || 0;
+          const isChanged = oldQty !== newQty;
+
+          return (
+            <div key={eqId} style={{
+              padding: '0.6rem 0.75rem',
+              borderRadius: 'var(--radius-sm)',
+              backgroundColor: isChanged ? 'rgba(16, 185, 129, 0.08)' : 'rgba(255, 255, 255, 0.01)',
+              border: isChanged ? '1px solid rgba(16, 185, 129, 0.15)' : '1px solid transparent',
+              color: isChanged ? 'var(--success)' : 'var(--text-primary)',
+              fontWeight: isChanged ? 600 : 'normal',
+              fontSize: '0.875rem'
+            }}>
+              {eqName}: {newQty ? `x${newQty}` : 'Không sử dụng'}
+            </div>
+          );
+        })}
+      </div>
     );
   };
 
@@ -759,7 +885,7 @@ export const Bookings: React.FC = () => {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
-      
+
       {isApprover && (
         <div style={{ display: 'flex', gap: '0.5rem', borderBottom: '1px solid var(--border-light)', paddingBottom: '0.5rem', marginBottom: '-0.5rem' }}>
           <button
@@ -818,177 +944,177 @@ export const Bookings: React.FC = () => {
       {activeSubTab === 'scheduler' ? (
         <div className="calendar-container">
           {/* Integrated Top Toolbar */}
-        <div className="calendar-top-bar">
-          {/* Left: View Mode toggles */}
-          <div style={{ display: 'flex', background: 'var(--bg-tertiary)', padding: '0.25rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-light)' }}>
-            <button
-              type="button"
-              className="btn btn-ghost"
-              style={{
-                padding: '0.4rem 0.75rem',
-                fontSize: '0.8rem',
-                borderRadius: 'var(--radius-sm)',
-                backgroundColor: viewMode === 'list' ? 'var(--bg-secondary)' : 'transparent',
-                color: viewMode === 'list' ? 'var(--accent)' : 'var(--text-secondary)',
-                boxShadow: viewMode === 'list' ? 'var(--shadow-sm)' : 'none'
-              }}
-              onClick={() => setViewMode('list')}
-            >
-              <List size={16} /> Danh sách
-            </button>
-            <button
-              type="button"
-              className="btn btn-ghost"
-              style={{
-                padding: '0.4rem 0.75rem',
-                fontSize: '0.8rem',
-                borderRadius: 'var(--radius-sm)',
-                backgroundColor: viewMode === 'calendar' ? 'var(--bg-secondary)' : 'transparent',
-                color: viewMode === 'calendar' ? 'var(--accent)' : 'var(--text-secondary)',
-                boxShadow: viewMode === 'calendar' ? 'var(--shadow-sm)' : 'none'
-              }}
-              onClick={() => setViewMode('calendar')}
-            >
-              <CalendarIcon size={16} /> Lịch biểu
-            </button>
+          <div className="calendar-top-bar">
+            {/* Left: View Mode toggles */}
+            <div style={{ display: 'flex', background: 'var(--bg-tertiary)', padding: '0.25rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-light)' }}>
+              <button
+                type="button"
+                className="btn btn-ghost"
+                style={{
+                  padding: '0.4rem 0.75rem',
+                  fontSize: '0.8rem',
+                  borderRadius: 'var(--radius-sm)',
+                  backgroundColor: viewMode === 'list' ? 'var(--bg-secondary)' : 'transparent',
+                  color: viewMode === 'list' ? 'var(--accent)' : 'var(--text-secondary)',
+                  boxShadow: viewMode === 'list' ? 'var(--shadow-sm)' : 'none'
+                }}
+                onClick={() => setViewMode('list')}
+              >
+                <List size={16} /> Danh sách
+              </button>
+              <button
+                type="button"
+                className="btn btn-ghost"
+                style={{
+                  padding: '0.4rem 0.75rem',
+                  fontSize: '0.8rem',
+                  borderRadius: 'var(--radius-sm)',
+                  backgroundColor: viewMode === 'calendar' ? 'var(--bg-secondary)' : 'transparent',
+                  color: viewMode === 'calendar' ? 'var(--accent)' : 'var(--text-secondary)',
+                  boxShadow: viewMode === 'calendar' ? 'var(--shadow-sm)' : 'none'
+                }}
+                onClick={() => setViewMode('calendar')}
+              >
+                <CalendarIcon size={16} /> Lịch biểu
+              </button>
+            </div>
+
+            {/* Center: Date picker for Calendar view */}
+            {viewMode === 'calendar' ? (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <button type="button" className="calendar-control-btn" onClick={() => changeTargetDate(-1)}>
+                  <ChevronLeft size={16} />
+                </button>
+                <input
+                  type="date"
+                  className="calendar-date-input"
+                  value={targetDate}
+                  onChange={(e) => setTargetDate(e.target.value)}
+                />
+                <button type="button" className="calendar-control-btn" onClick={() => changeTargetDate(1)}>
+                  <ChevronRight size={16} />
+                </button>
+
+                {/* Sub-view selection */}
+                <select
+                  className="calendar-date-input"
+                  style={{ appearance: 'none', minWidth: '120px' }}
+                  value={calendarViewType}
+                  onChange={(e: any) => setCalendarViewType(e.target.value)}
+                >
+                  <option value="MONTH">Theo Tháng</option>
+                  <option value="WEEK">Theo Tuần</option>
+                  <option value="DAY">Theo Ngày</option>
+                </select>
+              </div>
+            ) : (
+              /* Right: Filters (list view only) */
+              <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                <select
+                  className="calendar-date-input"
+                  style={{ appearance: 'none', minWidth: '130px' }}
+                  value={filterRoom}
+                  onChange={(e) => setFilterRoom(e.target.value)}
+                >
+                  <option value="">-- Phòng họp --</option>
+                  {rooms?.map((r: any) => (
+                    <option key={r.id} value={r.id}>{r.roomName}</option>
+                  ))}
+                </select>
+
+                <select
+                  className="calendar-date-input"
+                  style={{ appearance: 'none', minWidth: '120px' }}
+                  value={filterStatus}
+                  onChange={(e) => setFilterStatus(e.target.value)}
+                >
+                  <option value="">-- Trạng thái --</option>
+                  <option value="PENDING">Đang chờ</option>
+                  <option value="APPROVED">Đã duyệt</option>
+                  <option value="REJECTED">Từ chối</option>
+                  <option value="CANCELLED">Đã hủy</option>
+                </select>
+
+                <input
+                  type="text"
+                  className="calendar-date-input"
+                  style={{ maxWidth: '140px' }}
+                  placeholder="Người đặt..."
+                  value={filterOrganizer}
+                  onChange={(e) => setFilterOrganizer(e.target.value)}
+                />
+              </div>
+            )}
           </div>
 
-          {/* Center: Date picker for Calendar view */}
-          {viewMode === 'calendar' ? (
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-              <button type="button" className="calendar-control-btn" onClick={() => changeTargetDate(-7)}>
-                <ChevronLeft size={16} />
-              </button>
-              <input
-                type="date"
-                className="calendar-date-input"
-                value={targetDate}
-                onChange={(e) => setTargetDate(e.target.value)}
-              />
-              <button type="button" className="calendar-control-btn" onClick={() => changeTargetDate(7)}>
-                <ChevronRight size={16} />
-              </button>
-
-              {/* Sub-view selection */}
-              <select
-                className="calendar-date-input"
-                style={{ appearance: 'none', minWidth: '120px' }}
-                value={calendarViewType}
-                onChange={(e: any) => setCalendarViewType(e.target.value)}
-              >
-                <option value="MONTH">Theo Tháng</option>
-                <option value="WEEK">Theo Tuần</option>
-                <option value="DAY">Theo Ngày</option>
-              </select>
+          {/* Display Area Content */}
+          {isBookingsLoading ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', padding: '1.5rem' }}>
+              <div className="skeleton" style={{ height: '80px', width: '100%' }} />
+              <div className="skeleton" style={{ height: '80px', width: '100%' }} />
+              <div className="skeleton" style={{ height: '80px', width: '100%' }} />
+            </div>
+          ) : viewMode === 'calendar' ? (
+            bookings?.length === 0 ? (
+              <div style={{ padding: '4rem 2rem', textAlign: 'center', color: 'var(--text-tertiary)' }}>
+                Không tìm thấy cuộc họp nào trong hệ thống cho khoảng thời gian này.
+              </div>
+            ) : (
+              calendarViewType === 'MONTH' ? renderMonthCalendar() :
+                calendarViewType === 'WEEK' ? renderWeekCalendar() :
+                  renderDayCalendar()
+            )
+          ) : bookings?.length === 0 ? (
+            <div style={{ padding: '4rem 2rem', textAlign: 'center', color: 'var(--text-tertiary)' }}>
+              Không tìm thấy cuộc họp nào trong hệ thống.
             </div>
           ) : (
-            /* Right: Filters (list view only) */
-            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-              <select
-                className="calendar-date-input"
-                style={{ appearance: 'none', minWidth: '130px' }}
-                value={filterRoom}
-                onChange={(e) => setFilterRoom(e.target.value)}
-              >
-                <option value="">-- Phòng họp --</option>
-                {rooms?.map((r: any) => (
-                  <option key={r.id} value={r.id}>{r.roomName}</option>
-                ))}
-              </select>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', padding: '1.25rem' }}>
+              {bookings?.map((item: any) => (
+                <div
+                  key={item.id}
+                  onClick={() => handleBookingClick(item)}
+                  className="glass-card glass-card-hover"
+                  style={{
+                    padding: '1.25rem',
+                    borderLeft: `4px solid ${item.status === 'APPROVED' ? 'var(--success)' :
+                      item.status === 'REJECTED' ? 'var(--danger)' :
+                        item.status === 'PENDING' ? 'var(--warning)' : 'var(--text-tertiary)'
+                      }`,
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    flexWrap: 'wrap',
+                    gap: '1rem',
+                    cursor: 'pointer'
+                  }}
+                >
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
+                    <h4 style={{ margin: 0, fontSize: '1.05rem', color: 'var(--text-primary)', fontWeight: 600 }}>{item.title}</h4>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '1rem', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                      <span style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                        <MapPin size={14} /> {item.roomName} (Tầng {item.floorNumber})
+                      </span>
+                      <span style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                        <Clock size={14} /> {formatTime(item.startTime)} - {formatTime(item.endTime)} ({new Date(item.startTime).toLocaleDateString('vi-VN')})
+                      </span>
+                      <span style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                        <Users size={14} /> {item.attendee} người tham gia
+                      </span>
+                    </div>
+                  </div>
 
-              <select
-                className="calendar-date-input"
-                style={{ appearance: 'none', minWidth: '120px' }}
-                value={filterStatus}
-                onChange={(e) => setFilterStatus(e.target.value)}
-              >
-                <option value="">-- Trạng thái --</option>
-                <option value="PENDING">Đang chờ</option>
-                <option value="APPROVED">Đã duyệt</option>
-                <option value="REJECTED">Từ chối</option>
-                <option value="CANCELLED">Đã hủy</option>
-              </select>
-
-              <input
-                type="text"
-                className="calendar-date-input"
-                style={{ maxWidth: '140px' }}
-                placeholder="Người đặt..."
-                value={filterOrganizer}
-                onChange={(e) => setFilterOrganizer(e.target.value)}
-              />
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                    <span className={`badge badge-${item.status?.toLowerCase() || 'pending'}`}>
+                      {item.status || 'Chờ duyệt'}
+                    </span>
+                    <ChevronRight size={18} style={{ color: 'var(--text-tertiary)' }} />
+                  </div>
+                </div>
+              ))}
             </div>
           )}
         </div>
-
-        {/* Display Area Content */}
-        {isBookingsLoading ? (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', padding: '1.5rem' }}>
-            <div className="skeleton" style={{ height: '80px', width: '100%' }} />
-            <div className="skeleton" style={{ height: '80px', width: '100%' }} />
-            <div className="skeleton" style={{ height: '80px', width: '100%' }} />
-          </div>
-        ) : viewMode === 'calendar' ? (
-          bookings?.length === 0 ? (
-            <div style={{ padding: '4rem 2rem', textAlign: 'center', color: 'var(--text-tertiary)' }}>
-              Không tìm thấy cuộc họp nào trong hệ thống cho khoảng thời gian này.
-            </div>
-          ) : (
-            calendarViewType === 'MONTH' ? renderMonthCalendar() :
-              calendarViewType === 'WEEK' ? renderWeekCalendar() :
-                renderDayCalendar()
-          )
-        ) : bookings?.length === 0 ? (
-          <div style={{ padding: '4rem 2rem', textAlign: 'center', color: 'var(--text-tertiary)' }}>
-            Không tìm thấy cuộc họp nào trong hệ thống.
-          </div>
-        ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', padding: '1.25rem' }}>
-            {bookings?.map((item: any) => (
-              <div
-                key={item.id}
-                onClick={() => handleBookingClick(item)}
-                className="glass-card glass-card-hover"
-                style={{
-                  padding: '1.25rem',
-                  borderLeft: `4px solid ${item.status === 'APPROVED' ? 'var(--success)' :
-                    item.status === 'REJECTED' ? 'var(--danger)' :
-                      item.status === 'PENDING' ? 'var(--warning)' : 'var(--text-tertiary)'
-                    }`,
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-                  flexWrap: 'wrap',
-                  gap: '1rem',
-                  cursor: 'pointer'
-                }}
-              >
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
-                  <h4 style={{ margin: 0, fontSize: '1.05rem', color: 'var(--text-primary)', fontWeight: 600 }}>{item.title}</h4>
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '1rem', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
-                    <span style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
-                      <MapPin size={14} /> {item.roomName} (Tầng {item.floorNumber})
-                    </span>
-                    <span style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
-                      <Clock size={14} /> {formatTime(item.startTime)} - {formatTime(item.endTime)} ({new Date(item.startTime).toLocaleDateString('vi-VN')})
-                    </span>
-                    <span style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
-                      <Users size={14} /> {item.attendee} người tham gia
-                    </span>
-                  </div>
-                </div>
-
-                <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-                  <span className={`badge badge-${item.status?.toLowerCase() || 'pending'}`}>
-                    {item.status || 'Chờ duyệt'}
-                  </span>
-                  <ChevronRight size={18} style={{ color: 'var(--text-tertiary)' }} />
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
       ) : (
         renderApprovalsList()
       )}
@@ -1318,12 +1444,12 @@ export const Bookings: React.FC = () => {
             </div>
 
             <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-              
+
               {/* Basic Request Info */}
               <div className="glass-card" style={{ padding: '1rem', backgroundColor: 'rgba(255,255,255,0.01)' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '0.5rem' }}>
                   <div>
-                    <h4 style={{ margin: 0, fontSize: '1rem', color: '#fff', fontWeight: 600 }}>{selectedHistory.title}</h4>
+                    <h4 style={{ margin: 0, fontSize: '1rem', color: '#3f3838ff', fontWeight: 600 }}>{selectedHistory.title}</h4>
                     <p style={{ margin: '4px 0 0 0', fontSize: '0.8rem', color: 'var(--text-tertiary)' }}>
                       Người yêu cầu: <strong>{selectedHistory.userBooked}</strong> ({selectedHistory.email} | {selectedHistory.phone})
                     </p>
@@ -1334,98 +1460,89 @@ export const Bookings: React.FC = () => {
                 </div>
               </div>
 
-              {/* Old vs New Comparison Table */}
+              {/* Old vs New Side-by-Side Comparison Grid */}
               <div>
-                <h4 style={{ fontSize: '0.9rem', fontWeight: 700, color: 'var(--text-primary)', marginBottom: '0.5rem' }}>
-                  So sánh thay đổi
+                <h4 style={{ fontSize: '0.95rem', fontWeight: 700, color: 'var(--text-primary)', marginBottom: '0.75rem' }}>
+                  So sánh thay đổi chi tiết
                 </h4>
 
-                <div style={{ border: '1px solid var(--border-light)', borderRadius: 'var(--radius-md)', overflow: 'hidden' }}>
-                  <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
-                    <thead>
-                      <tr style={{ backgroundColor: 'var(--bg-tertiary)', borderBottom: '1px solid var(--border-light)' }}>
-                        <th style={{ padding: '0.75rem 0.5rem', fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-secondary)' }}>Thông tin</th>
-                        {selectedHistory.actionType === 'CREATED' ? (
-                          <th style={{ padding: '0.75rem 0.5rem', fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-secondary)' }}>Giá trị đăng ký</th>
-                        ) : (
-                          <>
-                            <th style={{ padding: '0.75rem 0.5rem', fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-secondary)' }}>Giá trị cũ</th>
-                            <th style={{ padding: '0.75rem 0.5rem', fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-secondary)' }}>Giá trị mới</th>
-                          </>
-                        )}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {selectedHistory.actionType === 'CREATED' ? (
-                        <>
-                          <tr style={{ borderBottom: '1px solid var(--border-light)' }}>
-                            <td style={{ padding: '0.75rem 0.5rem', fontWeight: 600, color: 'var(--text-secondary)', fontSize: '0.85rem' }}>Tiêu đề</td>
-                            <td style={{ padding: '0.75rem 0.5rem', color: 'var(--text-primary)', fontSize: '0.85rem' }}>{selectedHistory.newData?.title || selectedHistory.title}</td>
-                          </tr>
-                          <tr style={{ borderBottom: '1px solid var(--border-light)' }}>
-                            <td style={{ padding: '0.75rem 0.5rem', fontWeight: 600, color: 'var(--text-secondary)', fontSize: '0.85rem' }}>Mô tả</td>
-                            <td style={{ padding: '0.75rem 0.5rem', color: 'var(--text-primary)', fontSize: '0.85rem' }}>{selectedHistory.newData?.description || selectedHistory.description || '(trống)'}</td>
-                          </tr>
-                          <tr style={{ borderBottom: '1px solid var(--border-light)' }}>
-                            <td style={{ padding: '0.75rem 0.5rem', fontWeight: 600, color: 'var(--text-secondary)', fontSize: '0.85rem' }}>Phòng họp</td>
-                            <td style={{ padding: '0.75rem 0.5rem', color: 'var(--text-primary)', fontSize: '0.85rem' }}>{getRoomNameById(selectedHistory.newData?.roomId) || selectedHistory.roomName}</td>
-                          </tr>
-                          <tr style={{ borderBottom: '1px solid var(--border-light)' }}>
-                            <td style={{ padding: '0.75rem 0.5rem', fontWeight: 600, color: 'var(--text-secondary)', fontSize: '0.85rem' }}>Giờ bắt đầu</td>
-                            <td style={{ padding: '0.75rem 0.5rem', color: 'var(--text-primary)', fontSize: '0.85rem' }}>{formatFullDate(selectedHistory.newData?.startTime || selectedHistory.startTime)}</td>
-                          </tr>
-                          <tr style={{ borderBottom: '1px solid var(--border-light)' }}>
-                            <td style={{ padding: '0.75rem 0.5rem', fontWeight: 600, color: 'var(--text-secondary)', fontSize: '0.85rem' }}>Giờ kết thúc</td>
-                            <td style={{ padding: '0.75rem 0.5rem', color: 'var(--text-primary)', fontSize: '0.85rem' }}>{formatFullDate(selectedHistory.newData?.endTime || selectedHistory.endTime)}</td>
-                          </tr>
-                          <tr style={{ borderBottom: '1px solid var(--border-light)' }}>
-                            <td style={{ padding: '0.75rem 0.5rem', fontWeight: 600, color: 'var(--text-secondary)', fontSize: '0.85rem' }}>Số người tham gia</td>
-                            <td style={{ padding: '0.75rem 0.5rem', color: 'var(--text-primary)', fontSize: '0.85rem' }}>{selectedHistory.newData?.attendeeCount || selectedHistory.attendee} người</td>
-                          </tr>
-                        </>
-                      ) : selectedHistory.actionType === 'UPDATED' ? (
-                        <>
-                          {renderDiffRow('Tiêu đề', selectedHistory.oldData?.title, selectedHistory.newData?.title)}
-                          {renderDiffRow('Mô tả', selectedHistory.oldData?.description, selectedHistory.newData?.description)}
-                          {renderDiffRow('Phòng họp', selectedHistory.oldData?.roomId, selectedHistory.newData?.roomId, getRoomNameById)}
-                          {renderDiffRow('Giờ bắt đầu', selectedHistory.oldData?.startTime, selectedHistory.newData?.startTime, formatFullDate)}
-                          {renderDiffRow('Giờ kết thúc', selectedHistory.oldData?.endTime, selectedHistory.newData?.endTime, formatFullDate)}
-                          {renderDiffRow('Số người tham gia', selectedHistory.oldData?.attendeeCount, selectedHistory.newData?.attendeeCount, (val) => val ? `${val} người` : '')}
-                        </>
-                      ) : (
-                        /* Equipment action types */
-                        (() => {
-                          const oldEquips = selectedHistory.oldData?.equipments || [];
-                          const newEquips = selectedHistory.newData?.equipments || [];
-                          const allEquipIds = Array.from(new Set([
-                            ...oldEquips.map((e: any) => e.equipmentId),
-                            ...newEquips.map((e: any) => e.equipmentId)
-                          ])).filter(Boolean);
+                {selectedHistory.actionType === 'CREATED' ? (
+                  /* Single Card for New Registration */
+                  <div className="glass-card" style={{
+                    padding: '1.25rem',
+                    borderRadius: 'var(--radius-lg)',
+                    boxShadow: '0 8px 32px rgba(0, 0, 0, 0.25), 0 2px 8px rgba(0, 0, 0, 0.15)',
+                    border: '1px solid var(--border-light)',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '0.85rem'
+                  }}>
+                    <h5 style={{ margin: 0, fontSize: '1.05rem', fontWeight: 700, color: 'var(--accent)', borderBottom: '1px solid var(--border-light)', paddingBottom: '0.5rem' }}>
+                      Thông tin phòng họp đăng ký mới
+                    </h5>
+                    {renderSingleField('Tiêu đề cuộc họp', selectedHistory.newData?.title || selectedHistory.title)}
+                    {renderSingleField('Mô tả cuộc họp', selectedHistory.newData?.description || selectedHistory.description || '(trống)')}
+                    {renderSingleField('Phòng họp', getRoomNameById(selectedHistory.newData?.roomId) || selectedHistory.roomName)}
+                    {renderSingleField('Thời gian bắt đầu', selectedHistory.newData?.startTime || selectedHistory.startTime, formatFullDate)}
+                    {renderSingleField('Thời gian kết thúc', selectedHistory.newData?.endTime || selectedHistory.endTime, formatFullDate)}
+                    {renderSingleField('Số người tham gia', selectedHistory.newData?.attendeeCount || selectedHistory.attendee, (val) => val ? `${val} người` : '')}
+                  </div>
+                ) : (
+                  /* Two columns side by side: Left is Old, Right is New */
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.25rem' }}>
 
-                          if (allEquipIds.length === 0) {
-                            return (
-                              <tr>
-                                <td colSpan={3} style={{ padding: '1rem', textAlign: 'center', color: 'var(--text-tertiary)', fontStyle: 'italic' }}>
-                                  Không có thay đổi về thiết bị.
-                                </td>
-                              </tr>
-                            );
-                          }
+                    {/* Left Card: Old Info (Reddish border, soft shadow) */}
+                    <div className="glass-card" style={{
+                      padding: '1.25rem',
+                      borderRadius: 'var(--radius-lg)',
+                      boxShadow: '0 8px 24px rgba(239, 68, 68, 0.08), 0 2px 6px rgba(0, 0, 0, 0.1)',
+                      border: '1px solid rgba(239, 68, 68, 0.25)',
+                      backgroundColor: 'rgba(239, 68, 68, 0.02)',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '0.85rem'
+                    }}>
+                      <h5 style={{ margin: 0, fontSize: '1.05rem', fontWeight: 700, color: 'var(--danger)', borderBottom: '1px solid rgba(239, 68, 68, 0.15)', paddingBottom: '0.5rem' }}>
+                        Thông tin Cũ (Bị thay đổi)
+                      </h5>
+                      {renderOldField('Tiêu đề', selectedHistory.oldData?.title, selectedHistory.newData?.title)}
+                      {renderOldField('Mô tả', selectedHistory.oldData?.description, selectedHistory.newData?.description)}
+                      {renderOldField('Phòng họp', selectedHistory.oldData?.roomId, selectedHistory.newData?.roomId, getRoomNameById)}
+                      {renderOldField('Thời gian bắt đầu', selectedHistory.oldData?.startTime, selectedHistory.newData?.startTime, formatFullDate)}
+                      {renderOldField('Thời gian kết thúc', selectedHistory.oldData?.endTime, selectedHistory.newData?.endTime, formatFullDate)}
+                      {renderOldField('Số người tham gia', selectedHistory.oldData?.attendeeCount, selectedHistory.newData?.attendeeCount, (val) => val ? `${val} người` : '')}
 
-                          return allEquipIds.map((eqId: any) => {
-                            const oldEq = oldEquips.find((e: any) => e.equipmentId === eqId);
-                            const newEq = newEquips.find((e: any) => e.equipmentId === eqId);
-                            const eqName = newEq?.equipmentName || oldEq?.equipmentName || `Thiết bị #${eqId}`;
-                            const oldQty = oldEq?.usingQuantity || 0;
-                            const newQty = newEq?.usingQuantity || 0;
+                      {/* Old Equipments */}
+                      {renderOldEquipments(selectedHistory)}
+                    </div>
 
-                            return renderDiffRow(eqName, oldQty, newQty, (val) => val ? `x${val}` : 'Không sử dụng');
-                          });
-                        })()
-                      )}
-                    </tbody>
-                  </table>
-                </div>
+                    {/* Right Card: New Info (Greenish border, strong shadow) */}
+                    <div className="glass-card" style={{
+                      padding: '1.25rem',
+                      borderRadius: 'var(--radius-lg)',
+                      boxShadow: '0 12px 32px rgba(16, 185, 129, 0.12), 0 2px 10px rgba(0, 0, 0, 0.15)',
+                      border: '1px solid rgba(16, 185, 129, 0.25)',
+                      backgroundColor: 'rgba(16, 185, 129, 0.02)',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '0.85rem'
+                    }}>
+                      <h5 style={{ margin: 0, fontSize: '1.05rem', fontWeight: 700, color: 'var(--success)', borderBottom: '1px solid rgba(16, 185, 129, 0.15)', paddingBottom: '0.5rem' }}>
+                        Thông tin Mới (Yêu cầu duyệt)
+                      </h5>
+                      {renderNewField('Tiêu đề', selectedHistory.oldData?.title, selectedHistory.newData?.title)}
+                      {renderNewField('Mô tả', selectedHistory.oldData?.description, selectedHistory.newData?.description)}
+                      {renderNewField('Phòng họp', selectedHistory.oldData?.roomId, selectedHistory.newData?.roomId, getRoomNameById)}
+                      {renderNewField('Thời gian bắt đầu', selectedHistory.oldData?.startTime, selectedHistory.newData?.startTime, formatFullDate)}
+                      {renderNewField('Thời gian kết thúc', selectedHistory.oldData?.endTime, selectedHistory.newData?.endTime, formatFullDate)}
+                      {renderNewField('Số người tham gia', selectedHistory.oldData?.attendeeCount, selectedHistory.newData?.attendeeCount, (val) => val ? `${val} người` : '')}
+
+                      {/* New Equipments */}
+                      {renderNewEquipments(selectedHistory)}
+                    </div>
+
+                  </div>
+                )}
               </div>
 
               {/* Review notes */}
@@ -1445,7 +1562,7 @@ export const Bookings: React.FC = () => {
 
             <div className="modal-footer" style={{ justifyContent: 'flex-end', gap: '0.5rem' }}>
               <button type="button" className="btn btn-secondary" onClick={() => setActiveModal(null)}>Đóng</button>
-              
+
               <button
                 type="button"
                 className="btn btn-danger"

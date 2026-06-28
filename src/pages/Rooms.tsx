@@ -14,9 +14,7 @@ import {
   Plus,
   Edit3,
   Trash2,
-  Activity,
   XCircle,
-  CheckCircle,
   ListPlus,
   Mail,
   Calendar
@@ -111,6 +109,29 @@ export const Rooms: React.FC = () => {
     if (val !== '') {
       setFilterStart('');
       setFilterEnd('');
+    }
+  };
+
+  const preventNegativeNumber = (
+    e: React.KeyboardEvent<HTMLInputElement>
+  ) => {
+    if (["-", "+", "e", "E"].includes(e.key)) {
+      e.preventDefault();
+    }
+  };
+
+  const normalizeNegativeNumber = (
+    e: React.FormEvent<HTMLInputElement>
+  ) => {
+    const input = e.currentTarget;
+
+    if (input.value === "") return;
+
+    const value = Number(input.value);
+
+    if (value < 0) {
+      input.value = "0";
+      input.dispatchEvent(new Event("input", { bubbles: true }));
     }
   };
 
@@ -598,7 +619,7 @@ export const Rooms: React.FC = () => {
               type="number"
               className="form-control"
               style={{ width: '130px' }}
-              placeholder="Nhập số tầng..."
+              placeholder="Tầng..."
               value={filterFloor}
               onChange={(e) => handleFloorChange(Math.max(Number(e.target.value), 0).toString())}
             />
@@ -935,6 +956,9 @@ export const Rooms: React.FC = () => {
                     type="number"
                     className="form-control"
                     placeholder="12"
+                    min={1}
+                    onKeyDown={preventNegativeNumber}
+                    onInput={normalizeNegativeNumber}
                     {...roomRegister('capacity')}
                   />
                   {roomErrors.capacity && <span className="form-error">{roomErrors.capacity.message}</span>}
@@ -944,7 +968,10 @@ export const Rooms: React.FC = () => {
                   <label className="form-label" htmlFor="room-floor">Ở Tầng số *</label>
                   <input
                     id="room-floor"
+                    min={1}
                     type="number"
+                    onKeyDown={preventNegativeNumber}
+                    onInput={normalizeNegativeNumber}
                     className="form-control"
                     placeholder="2"
                     {...roomRegister('floorNumber')}
@@ -995,6 +1022,9 @@ export const Rooms: React.FC = () => {
 
                       <input
                         type="number"
+                        min={0}
+                        onKeyDown={preventNegativeNumber}
+                        onInput={normalizeNegativeNumber}
                         className="form-control"
                         style={{ width: '80px' }}
                         placeholder="SL"
@@ -1084,6 +1114,8 @@ export const Rooms: React.FC = () => {
                   <input
                     id="book-attendees"
                     type="number"
+                    onKeyDown={preventNegativeNumber}
+                    onInput={normalizeNegativeNumber}
                     className="form-control"
                     placeholder="8"
                     {...bookingRegister('attendee')}
@@ -1169,6 +1201,8 @@ export const Rooms: React.FC = () => {
                         className="form-control"
                         style={{ width: '80px' }}
                         placeholder="SL"
+                        onKeyDown={preventNegativeNumber}
+                        onInput={normalizeNegativeNumber}
                         {...bookingRegister(`equipments.${index}.quantity` as const)}
                       />
 
@@ -1241,6 +1275,8 @@ export const Rooms: React.FC = () => {
                 <input
                   id="equip-quantity"
                   type="number"
+                  onKeyDown={preventNegativeNumber}
+                  onInput={normalizeNegativeNumber}
                   className="form-control"
                   placeholder="10"
                   {...equipRegister('availableQuantity')}
