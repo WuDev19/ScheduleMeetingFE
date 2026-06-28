@@ -127,31 +127,46 @@ export const Bookings: React.FC = () => {
     }
   });
 
+  // Helper: compute [startDate, endDate] for calendar view based on viewType + targetDate
+  const getCalendarDateRange = (viewType: 'DAY' | 'WEEK' | 'MONTH', date: string): { startDate: string; endDate: string } => {
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const toStr = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+
+    if (viewType === 'DAY') {
+      return { startDate: date, endDate: date };
+    } else if (viewType === 'WEEK') {
+      const cur = new Date(date);
+      const dow = cur.getDay();
+      const offset = dow === 0 ? 6 : dow - 1; // Monday-first
+      const monday = new Date(cur);
+      monday.setDate(cur.getDate() - offset);
+      const sunday = new Date(monday);
+      sunday.setDate(monday.getDate() + 6);
+      return { startDate: toStr(monday), endDate: toStr(sunday) };
+    } else {
+      // MONTH
+      const cur = new Date(date);
+      const first = new Date(cur.getFullYear(), cur.getMonth(), 1);
+      const last = new Date(cur.getFullYear(), cur.getMonth() + 1, 0);
+      return { startDate: toStr(first), endDate: toStr(last) };
+    }
+  };
+
   // 3. Fetch Bookings list
   const { data: bookings, isLoading: isBookingsLoading } = useQuery({
     queryKey: ['bookings', 'list', viewMode, calendarViewType, targetDate, filterRoom, filterStatus, filterOrganizer, filterMyBookings, listPage],
     queryFn: async () => {
       if (viewMode === 'calendar') {
-        let url = `/booking/view?viewType=${calendarViewType}&targetDate=${targetDate}`;
-        if (filterMyBookings && user?.username) url += `&bookedBy=${encodeURIComponent(user.username)}`;
+        const url = `/booking/view?viewType=${calendarViewType}&targetDate=${targetDate}`;
         const response = await apiClient.get(url);
         let result = response.data?.data || [];
-        // Fallback client-side filter in case backend doesn't support bookedBy param
-        if (filterMyBookings && user?.id) {
-          const filtered = result.filter((b: any) =>
-            b.userId === user.id ||
-            b.bookedById === user.id ||
-            b.userBooked === user.username ||
-            b.userBooked === user.email ||
-            b.bookedBy === user.username ||
-            b.createdBy === user.username
-          );
-          // Only apply client filter if backend didn't already filter (i.e. result unchanged)
-          if (filtered.length < result.length) result = filtered;
+        // Client-side filter: compare username from JWT (user.username = JWT sub claim) with b.username from API
+        if (filterMyBookings && user?.username) {
+          result = result.filter((b: any) => b.username === user.username);
         }
         return result;
       } else {
-        let url = `/booking/filter?page=${listPage}&size=5`;
+        let url = `/booking/filter?page=${listPage}&size=10`;
         if (filterRoom) url += `&roomId=${filterRoom}`;
         if (filterStatus) url += `&status=${filterStatus}`;
         if (filterOrganizer) url += `&bookedBy=${encodeURIComponent(filterOrganizer)}`;
@@ -1289,7 +1304,12 @@ export const Bookings: React.FC = () => {
                     type="checkbox"
                     style={{ accentColor: 'var(--accent)', width: '14px', height: '14px' }}
                     checked={filterMyBookings}
-                    onChange={(e) => setFilterMyBookings(e.target.checked)}
+                    onChange={(e) => {
+                      setFilterMyBookings(e.target.checked);
+                      if (e.target.checked) {
+                        setFilterOrganizer('');
+                      }
+                    }}
                   />
                   Lịch của tôi
                 </label>
@@ -1328,7 +1348,12 @@ export const Bookings: React.FC = () => {
                   style={{ maxWidth: '140px' }}
                   placeholder="Người đặt..."
                   value={filterOrganizer}
-                  onChange={(e) => setFilterOrganizer(e.target.value)}
+                  onChange={(e) => {
+                    setFilterOrganizer(e.target.value);
+                    if (e.target.value) {
+                      setFilterMyBookings(false);
+                    }
+                  }}
                 />
 
                 {/* My Bookings Toggle for list view */}
@@ -1337,7 +1362,12 @@ export const Bookings: React.FC = () => {
                     type="checkbox"
                     style={{ accentColor: 'var(--accent)', width: '14px', height: '14px' }}
                     checked={filterMyBookings}
-                    onChange={(e) => setFilterMyBookings(e.target.checked)}
+                    onChange={(e) => {
+                      setFilterMyBookings(e.target.checked);
+                      if (e.target.checked) {
+                        setFilterOrganizer('');
+                      }
+                    }}
                   />
                   Lịch của tôi
                 </label>
@@ -1359,6 +1389,7 @@ export const Bookings: React.FC = () => {
           ) : (() => {
             const listItems: any[] = viewMode === 'list' ? (bookings as any)?.content ?? [] : [];
             const totalPages: number = viewMode === 'list' ? (bookings as any)?.totalPages ?? 1 : 1;
+            const totalElements: number = viewMode === 'list' ? (bookings as any)?.totalElements ?? 0 : 0;
             return listItems.length === 0 ? (
               <div style={{ padding: '4rem 2rem', textAlign: 'center', color: 'var(--text-tertiary)' }}>
                 Không tìm thấy cuộc họp nào trong hệ thống.
@@ -1409,82 +1440,82 @@ export const Bookings: React.FC = () => {
                 ))}
 
                 {/* Pagination */}
-                {totalPages > 1 && (
-                  <div style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    gap: '0.5rem',
-                    paddingTop: '0.75rem',
-                    borderTop: '1px solid var(--border-light)',
-                    marginTop: '0.25rem'
-                  }}>
-                    <button
-                      type="button"
-                      className="btn btn-ghost"
-                      style={{ padding: '0.35rem 0.65rem', fontSize: '0.8rem' }}
-                      disabled={listPage === 0}
-                      onClick={() => setListPage(0)}
-                    >
-                      «
-                    </button>
-                    <button
-                      type="button"
-                      className="btn btn-ghost"
-                      style={{ padding: '0.35rem 0.65rem', fontSize: '0.8rem' }}
-                      disabled={listPage === 0}
-                      onClick={() => setListPage(p => Math.max(0, p - 1))}
-                    >
-                      <ChevronLeft size={15} />
-                    </button>
+                <div style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '0.5rem',
+                  paddingTop: '0.75rem',
+                  borderTop: '1px solid var(--border-light)',
+                  marginTop: '0.25rem',
+                  flexWrap: 'wrap'
+                }}>
+                  <button
+                    type="button"
+                    className="btn btn-ghost"
+                    style={{ padding: '0.35rem 0.65rem', fontSize: '0.8rem' }}
+                    disabled={listPage === 0}
+                    onClick={() => setListPage(0)}
+                  >
+                    «
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-ghost"
+                    style={{ padding: '0.35rem 0.65rem', fontSize: '0.8rem' }}
+                    disabled={listPage === 0}
+                    onClick={() => setListPage(p => Math.max(0, p - 1))}
+                  >
+                    <ChevronLeft size={15} />
+                  </button>
 
-                    {Array.from({ length: totalPages }, (_, i) => i)
-                      .filter(i => Math.abs(i - listPage) <= 2)
-                      .map(i => (
-                        <button
-                          key={i}
-                          type="button"
-                          className="btn"
-                          style={{
-                            padding: '0.35rem 0.7rem',
-                            fontSize: '0.8rem',
-                            minWidth: '36px',
-                            backgroundColor: i === listPage ? 'var(--accent)' : 'transparent',
-                            color: i === listPage ? '#fff' : 'var(--text-secondary)',
-                            border: i === listPage ? 'none' : '1px solid var(--border-light)',
-                            fontWeight: i === listPage ? 700 : 400
-                          }}
-                          onClick={() => setListPage(i)}
-                        >
-                          {i + 1}
-                        </button>
-                      ))
-                    }
+                  {Array.from({ length: totalPages }, (_, i) => i)
+                    .filter(i => Math.abs(i - listPage) <= 2)
+                    .map(i => (
+                      <button
+                        key={i}
+                        type="button"
+                        className="btn"
+                        style={{
+                          padding: '0.35rem 0.7rem',
+                          fontSize: '0.8rem',
+                          minWidth: '36px',
+                          backgroundColor: i === listPage ? 'var(--accent)' : 'transparent',
+                          color: i === listPage ? '#fff' : 'var(--text-secondary)',
+                          border: i === listPage ? 'none' : '1px solid var(--border-light)',
+                          fontWeight: i === listPage ? 700 : 400
+                        }}
+                        onClick={() => setListPage(i)}
+                      >
+                        {i + 1}
+                      </button>
+                    ))
+                  }
 
-                    <button
-                      type="button"
-                      className="btn btn-ghost"
-                      style={{ padding: '0.35rem 0.65rem', fontSize: '0.8rem' }}
-                      disabled={listPage >= totalPages - 1}
-                      onClick={() => setListPage(p => Math.min(totalPages - 1, p + 1))}
-                    >
-                      <ChevronRight size={15} />
-                    </button>
-                    <button
-                      type="button"
-                      className="btn btn-ghost"
-                      style={{ padding: '0.35rem 0.65rem', fontSize: '0.8rem' }}
-                      disabled={listPage >= totalPages - 1}
-                      onClick={() => setListPage(totalPages - 1)}
-                    >
-                      »
-                    </button>
+                  <button
+                    type="button"
+                    className="btn btn-ghost"
+                    style={{ padding: '0.35rem 0.65rem', fontSize: '0.8rem' }}
+                    disabled={listPage >= totalPages - 1}
+                    onClick={() => setListPage(p => Math.min(totalPages - 1, p + 1))}
+                  >
+                    <ChevronRight size={15} />
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-ghost"
+                    style={{ padding: '0.35rem 0.65rem', fontSize: '0.8rem' }}
+                    disabled={listPage >= totalPages - 1}
+                    onClick={() => setListPage(totalPages - 1)}
+                  >
+                    »
+                  </button>
 
-                    <span style={{ fontSize: '0.78rem', color: 'var(--text-tertiary)', marginLeft: '0.25rem' }}>
-                      Trang {listPage + 1} / {totalPages}
-                    </span>
-                  </div>
-                )}
+                  <span style={{ fontSize: '0.78rem', color: 'var(--text-tertiary)', marginLeft: '0.25rem' }}>
+                    Trang {listPage + 1} / {totalPages}
+                    {totalElements > 0 && ` · ${totalElements} lịch họp`}
+                  </span>
+                </div>
               </div>
             );
           })()}
