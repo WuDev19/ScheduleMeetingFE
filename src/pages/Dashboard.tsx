@@ -4,16 +4,16 @@ import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 import { apiClient } from '../api/client';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { 
-  Calendar, 
-  DoorOpen, 
-  Users, 
-  Clock, 
-  CheckCircle, 
-  XCircle, 
-  ArrowRight, 
+import {
+  Calendar,
+  DoorOpen,
+  Users,
+  Clock,
+  CheckCircle,
+  XCircle,
+  ArrowRight,
   Briefcase,
-  AlertCircle 
+  AlertCircle
 } from 'lucide-react';
 
 export const Dashboard: React.FC = () => {
@@ -43,7 +43,15 @@ export const Dashboard: React.FC = () => {
     },
     enabled: !!user,
   });
-
+  const { data: userDetail } = useQuery({
+    queryKey: ['user', 'detail', user?.id],
+    queryFn: async () => {
+      if (!user?.id) return null;
+      const response = await apiClient.get(`/user/me/${user.id}`);
+      return response.data?.data;
+    },
+    enabled: !!user?.id,
+  });
   // 2. Fetch Pending Bookings for Approvers
   const isApprover = hasAuthority('BOOKING:APPROVE');
   const { data: pendingBookings, isLoading: isPendingLoading } = useQuery({
@@ -197,8 +205,10 @@ export const Dashboard: React.FC = () => {
           </div>
           <div>
             <span style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)', fontWeight: 600, textTransform: 'uppercase' }}>Bộ phận của bạn</span>
+            {/* ✅ [SỬA] Hiển thị department từ userDetail.department.name */}
+            {/* Nếu chưa chọn phòng ban, hiển thị "(Chưa cập nhật)" */}
             <h3 style={{ fontSize: '1.15rem', fontWeight: 700, margin: 0, color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-              {user?.roles?.includes('ADMIN') ? 'Ban Quản Trị' : 'Phòng Nhân Sự'}
+              {userDetail?.department?.name || '(Chưa cập nhật)'}
             </h3>
           </div>
         </div>
@@ -206,7 +216,7 @@ export const Dashboard: React.FC = () => {
 
       {/* Main Grid: My Bookings & Approver panel */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
-        
+
         {/* Approvals (Only visible to Approver/Admin role) */}
         {isApprover && (
           <section className="glass-card" style={{ borderLeft: '4px solid var(--warning)' }}>
@@ -229,7 +239,7 @@ export const Dashboard: React.FC = () => {
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
                 {pendingBookings?.map((item: any) => (
-                  <div 
+                  <div
                     key={item.id}
                     style={{
                       display: 'flex',
@@ -253,16 +263,16 @@ export const Dashboard: React.FC = () => {
                     </div>
 
                     <div style={{ display: 'flex', gap: '0.5rem' }}>
-                      <button 
+                      <button
                         onClick={() => handleApproveClick(item.id)}
-                        className="btn" 
+                        className="btn"
                         style={{ backgroundColor: 'var(--success)', color: '#fff', fontSize: '0.8rem', padding: '0.5rem 0.875rem' }}
                       >
                         <CheckCircle size={14} /> Duyệt
                       </button>
-                      <button 
+                      <button
                         onClick={() => handleRejectClick(item.id)}
-                        className="btn" 
+                        className="btn"
                         style={{ backgroundColor: 'var(--danger)', color: '#fff', fontSize: '0.8rem', padding: '0.5rem 0.875rem' }}
                       >
                         <XCircle size={14} /> Từ chối
@@ -304,7 +314,7 @@ export const Dashboard: React.FC = () => {
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
               {myBookings?.map((item: any) => (
-                <div 
+                <div
                   key={item.id}
                   onClick={() => navigate(`/bookings?bookingId=${item.id}`)}
                   className="glass-card-hover"
@@ -359,7 +369,7 @@ export const Dashboard: React.FC = () => {
             <div className="modal-body">
               <div className="form-group">
                 <label className="form-label" htmlFor="approve-note">Ghi chú duyệt lịch họp (không bắt buộc)</label>
-                <textarea 
+                <textarea
                   id="approve-note"
                   className="form-control"
                   style={{ minHeight: '100px', resize: 'vertical' }}
@@ -392,7 +402,7 @@ export const Dashboard: React.FC = () => {
             <div className="modal-body">
               <div className="form-group">
                 <label className="form-label" htmlFor="reject-note">Lý do từ chối lịch họp (bắt buộc)</label>
-                <textarea 
+                <textarea
                   id="reject-note"
                   required
                   className="form-control"

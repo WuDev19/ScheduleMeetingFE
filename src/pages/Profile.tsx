@@ -87,13 +87,10 @@ export const Profile: React.FC = () => {
   const updateInfoMutation = useMutation({
     mutationFn: async (data: ProfileFormValues) => {
       if (!user?.id) return;
-      // Endpoint `/user/{id}` accepts Multipart Form Data / URL encoded fields 
-      const formData = new FormData();
-      formData.append('fullName', data.fullName);
-      formData.append('phone', data.phone);
-
-      await apiClient.patch(`/user/${user.id}`, formData, {
-        headers: { 'Content-Type': 'multipart/form-data' }
+      // ✅ Backend đã sửa thành @RequestBody nên gửi JSON object
+      await apiClient.patch(`/user/${user.id}`, {
+        fullName: data.fullName,
+        phone: data.phone
       });
     },
     onSuccess: () => {
@@ -124,17 +121,24 @@ export const Profile: React.FC = () => {
 
   // CHANGE PASSWORD MUTATION
   const changePasswordMutation = useMutation({
-    mutationFn: async (_data: PasswordFormValues) => {
-      // In AuthController `/auth/change-password` or profile settings. Let's call reset password endpoint or mockup
-      // Authenticators standard password changes
-      await apiClient.post('/auth/forgot-password', { email: userDetail?.email });
+    mutationFn: async (data: PasswordFormValues) => {
+      if (!userDetail?.id) {
+        throw new Error('Không thể lấy thông tin người dùng. Vui lòng tải lại trang.');
+      }
+
+      // ✅ Backend đã sửa thành @RequestBody nên gửi JSON object
+      const response = await apiClient.patch(`/user/${userDetail.id}`, {
+        newPassword: data.newPassword
+      });
+      return response.data;
     },
     onSuccess: () => {
-      showToast('Một email hướng dẫn thiết lập mật khẩu mới đã được gửi tới hòm thư của bạn.', 'success');
+      showToast('Mật khẩu đã được cập nhật thành công', 'success');
       resetPassForm();
     },
-    onError: () => {
-      showToast('Không thể thực hiện yêu cầu đổi mật khẩu', 'error');
+    onError: (error: any) => {
+      const message = error?.response?.data?.message || 'Không thể cập nhật mật khẩu';
+      showToast(message, 'error');
     }
   });
 
@@ -269,7 +273,7 @@ export const Profile: React.FC = () => {
           {/* Avatar and Basic details panel */}
           <section className="glass-card" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '1.5rem', textAlign: 'center' }}>
             <div style={{ position: 'relative' }}>
-              <div 
+              <div
                 onClick={() => userDetail?.avatarUrl && setIsLightboxOpen(true)}
                 style={{
                   width: '100px',
@@ -539,10 +543,10 @@ export const Profile: React.FC = () => {
             <p style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)', marginBottom: '1.25rem' }}>
               Tạm thời vô hiệu hóa tài khoản hoạt động. Bạn sẽ bị đăng xuất ngay lập tức và cần liên hệ Quản trị viên để mở khóa lại.
             </p>
-            <button 
-              type="button" 
-              className="btn" 
-              style={{ width: '100%', backgroundColor: 'var(--danger)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem', border: 'none', padding: '0.6rem', borderRadius: 'var(--radius)' }} 
+            <button
+              type="button"
+              className="btn"
+              style={{ width: '100%', backgroundColor: 'var(--danger)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem', border: 'none', padding: '0.6rem', borderRadius: 'var(--radius)' }}
               onClick={handleSelfLock}
               disabled={lockSelfMutation.isPending}
             >
@@ -552,8 +556,8 @@ export const Profile: React.FC = () => {
         </div>
       </div>
       {isLightboxOpen && userDetail?.avatarUrl && (
-        <div 
-          className="modal-overlay" 
+        <div
+          className="modal-overlay"
           onClick={() => setIsLightboxOpen(false)}
           style={{
             zIndex: 9999,
@@ -564,13 +568,13 @@ export const Profile: React.FC = () => {
             backdropFilter: 'blur(8px)'
           }}
         >
-          <div 
+          <div
             style={{ position: 'relative', maxWidth: '90%', maxHeight: '90%' }}
             onClick={(e) => e.stopPropagation()}
           >
-            <img 
-              src={userDetail.avatarUrl} 
-              alt="Avatar Full Detail" 
+            <img
+              src={userDetail.avatarUrl}
+              alt="Avatar Full Detail"
               style={{
                 maxWidth: '100%',
                 maxHeight: '80vh',
@@ -578,7 +582,7 @@ export const Profile: React.FC = () => {
                 boxShadow: 'var(--shadow-2xl)',
                 border: '4px solid rgba(255, 255, 255, 0.15)',
                 objectFit: 'contain'
-              }} 
+              }}
             />
             <button
               onClick={() => setIsLightboxOpen(false)}

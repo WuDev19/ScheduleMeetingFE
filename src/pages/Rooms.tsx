@@ -6,25 +6,49 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useForm, useFieldArray } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
-import { 
-  Search, 
-  DoorOpen, 
-  Users, 
-  Layers, 
-  Plus, 
-  Edit3, 
-  Trash2, 
-  Activity, 
+import {
+  Search,
+  DoorOpen,
+  Users,
+  Layers,
+  Plus,
+  Edit3,
+  Trash2,
+  Activity,
   XCircle,
   CheckCircle,
-  ListPlus
+  ListPlus,
+  Mail,
+  Calendar
 } from 'lucide-react';
+
+// Helper to format date string to "yyyy-MM-dd HH:mm:ssXXX"
+const formatDateTimeForApi = (dateTimeStr: string): string => {
+  if (!dateTimeStr) return '';
+  const date = new Date(dateTimeStr);
+  const pad = (num: number) => String(num).padStart(2, '0');
+
+  const yyyy = date.getFullYear();
+  const MM = pad(date.getMonth() + 1);
+  const dd = pad(date.getDate());
+  const hh = pad(date.getHours());
+  const mm = pad(date.getMinutes());
+  const ss = pad(date.getSeconds());
+
+  const offsetMinutes = date.getTimezoneOffset();
+  const offsetSign = offsetMinutes <= 0 ? '+' : '-';
+  const absOffsetMinutes = Math.abs(offsetMinutes);
+  const offsetHours = pad(Math.floor(absOffsetMinutes / 60));
+  const offsetMins = pad(absOffsetMinutes % 60);
+
+  return `${yyyy}-${MM}-${dd} ${hh}:${mm}:${ss}${offsetSign}${offsetHours}:${offsetMins}`;
+};
 
 // Form validation schemas
 const roomSchema = z.object({
   roomName: z.string().min(1, 'Vui lòng nhập tên phòng'),
   capacity: z.coerce.number().min(1, 'Sức chứa phải lớn hơn hoặc bằng 1'),
-  floorNumber: z.coerce.number().min(0, 'Số tầng không hợp lệ'),
+  floorNumber: z.coerce.number().min(1, 'Số tầng không hợp lệ'),
   description: z.string().optional(),
   buildingId: z.coerce.number().min(1, 'Vui lòng chọn tòa nhà'),
   equipments: z.array(z.object({
@@ -33,30 +57,86 @@ const roomSchema = z.object({
   })).optional()
 });
 
-const overlapSchema = z.object({
+
+
+const bookingFormSchema = z.object({
+  title: z.string().min(1, 'Vui lòng nhập tiêu đề cuộc họp'),
+  description: z.string().optional(),
+  roomId: z.coerce.number().min(1, 'Vui lòng chọn phòng họp'),
   start: z.string().min(1, 'Vui lòng chọn thời gian bắt đầu'),
-  end: z.string().min(1, 'Vui lòng chọn thời gian kết thúc')
+  end: z.string().min(1, 'Vui lòng chọn thời gian kết thúc'),
+  attendee: z.coerce.number().min(1, 'Số lượng tham gia tối thiểu là 1'),
+  receiversInput: z.string().optional(),
+  equipments: z.array(z.object({
+    equipmentId: z.coerce.number().min(1, 'Chọn thiết bị'),
+    quantity: z.coerce.number().min(1, 'Số lượng tối thiểu là 1')
+  })).optional()
+}).refine((data) => new Date(data.start) < new Date(data.end), {
+  message: "Thời gian kết thúc phải diễn ra sau thời gian bắt đầu",
+  path: ["end"]
+});
+
+const equipmentSchema = z.object({
+  equipmentName: z.string().min(1, 'Tên thiết bị không được để trống'),
+  description: z.string().optional().or(z.literal('')),
+  availableQuantity: z.coerce.number().min(0, 'Số lượng tối thiểu là 0')
 });
 
 type RoomFormValues = z.infer<typeof roomSchema>;
-type OverlapFormValues = z.infer<typeof overlapSchema>;
+type BookingFormValues = z.infer<typeof bookingFormSchema>;
+type EquipmentFormValues = z.infer<typeof equipmentSchema>;
 
 export const Rooms: React.FC = () => {
-  const { hasAuthority } = useAuth();
+  const { hasAuthority, user } = useAuth();
   const { showToast } = useToast();
   const queryClient = useQueryClient();
 
+  const [activeTab, setActiveTab] = useState<'rooms' | 'equipments'>('rooms');
   const [keyword, setKeyword] = useState('');
   const [filterFloor, setFilterFloor] = useState<string>('');
   const [filterCapacity, setFilterCapacity] = useState<string>('');
-  const [activeModal, setActiveModal] = useState<'create' | 'edit' | 'overlap' | 'assign' | null>(null);
+  const [filterStart, setFilterStart] = useState<string>('');
+  const [filterEnd, setFilterEnd] = useState<string>('');
+  const [activeModal, setActiveModal] = useState<'create' | 'edit' | 'assign' | 'book' | 'create-equip' | 'edit-equip' | null>(null);
   const [selectedRoom, setSelectedRoom] = useState<any>(null);
-  const [alternativeRooms, setAlternativeRooms] = useState<any[]>([]);
+
+  // Equipment tab states
+  const [equipKeyword, setEquipKeyword] = useState('');
+  const [equipPage, setEquipPage] = useState(0);
+  const [equipPageSize] = useState(6);
+  const [selectedEquip, setSelectedEquip] = useState<any>(null);
+
+  const handleFloorChange = (val: string) => {
+    setFilterFloor(val);
+    if (val !== '') {
+      setFilterStart('');
+      setFilterEnd('');
+    }
+  };
+
+  const handleCapacityChange = (val: string) => {
+    setFilterCapacity(val);
+    if (val !== '') {
+      setFilterStart('');
+      setFilterEnd('');
+    }
+  };
 
   // 1. Fetch Rooms list
   const { data: roomsData, isLoading: isRoomsLoading } = useQuery({
-    queryKey: ['rooms', 'list', keyword, filterFloor, filterCapacity],
+    queryKey: ['rooms', 'list', keyword, filterFloor, filterCapacity, filterStart, filterEnd],
     queryFn: async () => {
+      if (filterStart && filterEnd) {
+        const startTime = formatDateTimeForApi(filterStart);
+        const endTime = formatDateTimeForApi(filterEnd);
+        const response = await apiClient.request({
+          url: '/room/not-overlap',
+          method: 'GET',
+          data: { start: startTime, end: endTime }
+        });
+        return response.data?.data?.content || [];
+      }
+
       let url = '/room/all?page=0&size=20';
       if (keyword) {
         url = `/room/search?keyword=${encodeURIComponent(keyword)}&page=0&size=20`;
@@ -88,13 +168,26 @@ export const Rooms: React.FC = () => {
     }
   });
 
+  // Fetch paginated equipment list for Equipments tab
+  const { data: equipData, isLoading: isEquipLoading } = useQuery({
+    queryKey: ['equipments', 'search', equipKeyword, equipPage],
+    queryFn: async () => {
+      const response = await apiClient.get(`/equipment/search?keyword=${encodeURIComponent(equipKeyword)}&page=${equipPage}&size=${equipPageSize}`);
+      return response.data?.data;
+    }
+  });
+
+  const equipList = equipData?.content || [];
+  const equipTotalPages = equipData?.totalPages || 0;
+
   // React Hook Form for Room creation/updates
-  const { 
-    register: roomRegister, 
-    handleSubmit: handleRoomSubmit, 
-    reset: resetRoomForm, 
+  const {
+    register: roomRegister,
+    handleSubmit: handleRoomSubmit,
+    reset: resetRoomForm,
     control,
-    formState: { errors: roomErrors } 
+    watch,
+    formState: { errors: roomErrors }
   } = useForm<RoomFormValues>({
     resolver: zodResolver(roomSchema) as any,
     defaultValues: { equipments: [] }
@@ -105,13 +198,43 @@ export const Rooms: React.FC = () => {
     name: 'equipments'
   });
 
-  // React Hook Form for check overlap
+
+
+  // React Hook Form for direct booking
   const {
-    register: overlapRegister,
-    handleSubmit: handleOverlapSubmit,
-    formState: { errors: overlapErrors }
-  } = useForm<OverlapFormValues>({
-    resolver: zodResolver(overlapSchema)
+    register: bookingRegister,
+    handleSubmit: handleBookingSubmit,
+    reset: resetBookingForm,
+    control: bookingControl,
+    watch: bookingWatch,
+    formState: { errors: bookingErrors }
+  } = useForm<BookingFormValues>({
+    resolver: zodResolver(bookingFormSchema) as any,
+    defaultValues: { equipments: [] }
+  });
+
+  const {
+    fields: bookingFields,
+    append: bookingAppend,
+    remove: bookingRemove
+  } = useFieldArray({
+    control: bookingControl,
+    name: 'equipments'
+  });
+
+  // React Hook Form for Equipment CRUD
+  const {
+    register: equipRegister,
+    handleSubmit: handleEquipSubmit,
+    reset: resetEquipForm,
+    formState: { errors: equipErrors }
+  } = useForm<EquipmentFormValues>({
+    resolver: zodResolver(equipmentSchema) as any,
+    values: selectedEquip ? {
+      equipmentName: selectedEquip.equipmentName || '',
+      description: selectedEquip.description || '',
+      availableQuantity: selectedEquip.availableQuantity || 0
+    } : undefined
   });
 
   // CREATE ROOM MUTATION
@@ -134,16 +257,27 @@ export const Rooms: React.FC = () => {
   // UPDATE ROOM MUTATION
   const updateRoomMutation = useMutation({
     mutationFn: async ({ id, data }: { id: number; data: RoomFormValues }) => {
-      // API expects roomName, capacity, floorNumber, description
       await apiClient.patch(`/room/${id}`, {
         roomName: data.roomName,
         capacity: data.capacity,
         floorNumber: data.floorNumber,
         description: data.description
       });
-      // If equipments are passed, assign them to room
-      if (data.equipments && data.equipments.length > 0) {
-        await apiClient.post(`/room/${id}/equipment`, data.equipments);
+      if (data.equipments) {
+        const originalEquipmentIds = selectedRoom?.equipments?.map((e: any) => Number(e.equipmentId)) || [];
+
+        // 2. Lọc ra các thiết bị mới được thêm vào form (chưa có trong danh sách cũ)
+        const newlyAddedEquipments = data.equipments
+          .filter((item: any) => !originalEquipmentIds.includes(Number(item.equipmentId)))
+          .map((item: any) => ({
+            equipmentId: Number(item.equipmentId),
+            quantity: Number(item.quantity)
+          }));
+
+        // 3. Chỉ gửi request API nếu thực sự có thiết bị mới được thêm vào
+        if (newlyAddedEquipments.length > 0) {
+          await apiClient.post(`/room/${id}/equipment`, newlyAddedEquipments);
+        }
       }
     },
     onSuccess: () => {
@@ -161,7 +295,7 @@ export const Rooms: React.FC = () => {
   // DELETE ROOM MUTATION
   const deleteRoomMutation = useMutation({
     mutationFn: async (id: number) => {
-      await apiClient.delete(`/room/soft/${id}`); // soft delete
+      await apiClient.delete(`/room/soft/${id}`);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['rooms'] });
@@ -173,25 +307,89 @@ export const Rooms: React.FC = () => {
     }
   });
 
-  // CHECK OVERLAP MUTATION
-  const checkOverlapMutation = useMutation({
-    mutationFn: async ({ roomId, data }: { roomId: number; data: OverlapFormValues }) => {
-      // Backend expects start and end as OffsetDateTime (e.g. yyyy-MM-dd HH:mm:ssXXX)
-      // Convert HTML datetime-local format to ISO standard string
-      const startTime = new Date(data.start).toISOString();
-      const endTime = new Date(data.end).toISOString();
-      
-      const response = await apiClient.get(`/room/not-overlap/${roomId}`, {
-        data: { start: startTime, end: endTime } // get alternative non-overlapping rooms
-      });
-      return response.data?.data?.content || [];
+
+
+  // CREATE EQUIPMENT MUTATION
+  const createEquipMutation = useMutation({
+    mutationFn: async (data: EquipmentFormValues) => {
+      await apiClient.post('/equipment', data);
     },
-    onSuccess: (data) => {
-      setAlternativeRooms(data);
-      showToast('Đã tìm kiếm các phòng trống khác thành công', 'success');
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['equipments'] });
+      showToast('Tạo thiết bị mới thành công', 'success');
+      setActiveModal(null);
+      resetEquipForm();
     },
     onError: (err: any) => {
-      const msg = err.response?.data?.message || 'Có lỗi xảy ra khi kiểm tra trùng lịch';
+      const msg = err.response?.data?.message || 'Không thể tạo thiết bị';
+      showToast(msg, 'error');
+    }
+  });
+
+  // UPDATE EQUIPMENT MUTATION
+  const updateEquipMutation = useMutation({
+    mutationFn: async ({ id, data }: { id: number; data: EquipmentFormValues }) => {
+      await apiClient.patch(`/equipment/${id}`, data);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['equipments'] });
+      showToast('Cập nhật thiết bị thành công', 'success');
+      setActiveModal(null);
+      resetEquipForm();
+      setSelectedEquip(null);
+    },
+    onError: (err: any) => {
+      const msg = err.response?.data?.message || 'Không thể cập nhật thiết bị';
+      showToast(msg, 'error');
+    }
+  });
+
+  // DELETE EQUIPMENT MUTATION
+  const deleteEquipMutation = useMutation({
+    mutationFn: async (id: number) => {
+      await apiClient.delete(`/equipment/${id}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['equipments'] });
+      showToast('Xóa thiết bị thành công', 'success');
+    },
+    onError: (err: any) => {
+      const msg = err.response?.data?.message || 'Không thể xóa thiết bị';
+      showToast(msg, 'error');
+    }
+  });
+
+  // CREATE BOOKING MUTATION FROM ROOM PAGE
+  const createBookingFromRoomMutation = useMutation({
+    mutationFn: async (data: BookingFormValues) => {
+      const startDateTime = formatDateTimeForApi(data.start);
+      const endDateTime = formatDateTimeForApi(data.end);
+      const receivers = data.receiversInput
+        ? data.receiversInput.split(',').map((e) => e.trim()).filter((e) => e.length > 0)
+        : [];
+
+      const payload = {
+        roomId: data.roomId,
+        userId: user?.id || 1,
+        title: data.title,
+        description: data.description || '',
+        start: startDateTime,
+        end: endDateTime,
+        attendee: data.attendee,
+        equipments: data.equipments || [],
+        receivers
+      };
+
+      await apiClient.post('/booking', payload);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['bookings'] });
+      showToast('Đăng ký lịch họp thành công, chờ người duyệt', 'success');
+      setActiveModal(null);
+      resetBookingForm();
+    },
+    onError: (err: any) => {
+      const msg = err.response?.data?.message || 'Có lỗi trùng lịch hoặc thiếu thiết bị';
       showToast(msg, 'error');
     }
   });
@@ -205,17 +403,44 @@ export const Rooms: React.FC = () => {
       description: room.description || '',
       buildingId: room.building?.id || 1,
       equipments: room.equipments?.map((eq: any) => ({
-        equipmentId: eq.id || eq.equipmentId,
+        equipmentId: eq.equipmentId || eq.id,
         quantity: eq.quantity || eq.usingQuantity || 1
       })) || []
     });
     setActiveModal('edit');
   };
 
-  const handleOverlapClick = (room: any) => {
+
+
+  const handleBookClick = (room: any) => {
     setSelectedRoom(room);
-    setAlternativeRooms([]);
-    setActiveModal('overlap');
+    resetBookingForm({
+      title: '',
+      description: '',
+      roomId: room.id,
+      start: '',
+      end: '',
+      attendee: 1,
+      receiversInput: '',
+      equipments: []
+    });
+    setActiveModal('book');
+  };
+
+  const handleEditEquipClick = (equip: any) => {
+    setSelectedEquip(equip);
+    resetEquipForm({
+      equipmentName: equip.equipmentName,
+      description: equip.description || '',
+      availableQuantity: equip.availableQuantity
+    });
+    setActiveModal('edit-equip');
+  };
+
+  const handleDeleteEquip = (id: number, name: string) => {
+    if (window.confirm(`Bạn có chắc chắn muốn xóa thiết bị "${name}"?`)) {
+      deleteEquipMutation.mutate(id);
+    }
   };
 
   const onSaveRoom = (data: RoomFormValues) => {
@@ -226,9 +451,55 @@ export const Rooms: React.FC = () => {
     }
   };
 
-  const onCheckOverlap = (data: OverlapFormValues) => {
-    if (selectedRoom) {
-      checkOverlapMutation.mutate({ roomId: selectedRoom.id, data });
+  const onSaveEquip = (data: EquipmentFormValues) => {
+    if (activeModal === 'create-equip') {
+      createEquipMutation.mutate(data);
+    } else if (activeModal === 'edit-equip' && selectedEquip) {
+      updateEquipMutation.mutate({ id: selectedEquip.equipmentId, data });
+    }
+  };
+
+  const onSaveBooking = (data: BookingFormValues) => {
+    createBookingFromRoomMutation.mutate(data);
+  };
+
+
+
+  // Filter options for Room Equipments
+  const watchedRoomEquipments = watch('equipments') || [];
+  const getAvailableEquipments = (currentIndex: number) => {
+    const selectedIds = watchedRoomEquipments
+      .map((item: any, idx: number) => idx !== currentIndex ? Number(item?.equipmentId) : null)
+      .filter((id: number | null) => id !== null && !isNaN(id));
+
+    return equipmentsList?.filter((eq: any) => !selectedIds.includes(Number(eq.equipmentId))) || [];
+  };
+
+  const handleAddEquipmentRow = () => {
+    const available = getAvailableEquipments(-1);
+    if (available.length > 0) {
+      append({ equipmentId: available[0].equipmentId, quantity: 1 });
+    } else {
+      append({ equipmentId: '', quantity: 1 } as any);
+    }
+  };
+
+  // Filter options for Booking Equipments
+  const watchedBookingEquipments = bookingWatch('equipments') || [];
+  const getAvailableBookingEquipments = (currentIndex: number) => {
+    const selectedIds = watchedBookingEquipments
+      .map((item: any, idx: number) => idx !== currentIndex ? Number(item?.equipmentId) : null)
+      .filter((id: number | null) => id !== null && !isNaN(id));
+
+    return equipmentsList?.filter((eq: any) => !selectedIds.includes(Number(eq.equipmentId))) || [];
+  };
+
+  const handleAddBookingEquipmentRow = () => {
+    const available = getAvailableBookingEquipments(-1);
+    if (available.length > 0) {
+      bookingAppend({ equipmentId: available[0].equipmentId, quantity: 1 });
+    } else {
+      bookingAppend({ equipmentId: '', quantity: 1 } as any);
     }
   };
 
@@ -242,189 +513,376 @@ export const Rooms: React.FC = () => {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
-      {/* Header controls */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem' }}>
-        <div>
-          <h2 style={{ fontSize: '1.5rem', fontWeight: 700, margin: 0 }}>Danh Sách Phòng Họp</h2>
-          <p style={{ color: 'var(--text-tertiary)', fontSize: '0.85rem' }}>Quản lý phòng họp, thiết bị, và tra cứu phòng trống</p>
-        </div>
-        
-        {isAdmin && (
-          <button 
-            className="btn btn-primary" 
-            onClick={() => {
-              setSelectedRoom(null);
-              resetRoomForm({ roomName: '', capacity: 1, floorNumber: 0, description: '', buildingId: 1, equipments: [] });
-              setActiveModal('create');
+      {/* Tab controls */}
+      {isAdmin && (
+        <div style={{ display: 'flex', borderBottom: '1px solid var(--border-light)', marginBottom: '0.5rem', gap: '1rem' }}>
+          <button
+            onClick={() => setActiveTab('rooms')}
+            style={{
+              padding: '10px 16px',
+              fontSize: '0.88rem',
+              fontWeight: 600,
+              border: 'none',
+              background: 'none',
+              color: activeTab === 'rooms' ? 'var(--accent)' : 'var(--text-tertiary)',
+              borderBottom: activeTab === 'rooms' ? '2px solid var(--accent)' : '2px solid transparent',
+              cursor: 'pointer',
+              transition: 'all var(--transition-fast)'
             }}
           >
-            <Plus size={16} /> Tạo phòng họp mới
+            Danh sách Phòng họp
           </button>
-        )}
-      </div>
-
-      {/* Filter panel */}
-      <div className="glass-card" style={{ display: 'flex', flexWrap: 'wrap', gap: '1rem', padding: '1rem' }}>
-        <div style={{ flexGrow: 1, minWidth: '240px', position: 'relative' }}>
-          <span style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-tertiary)' }}>
-            <Search size={16} />
-          </span>
-          <input 
-            type="text" 
-            className="form-control"
-            style={{ width: '100%', paddingLeft: '2.5rem' }}
-            placeholder="Tìm theo tên phòng họp..."
-            value={keyword}
-            onChange={(e) => setKeyword(e.target.value)}
-          />
-        </div>
-
-        <div style={{ width: '150px' }}>
-          <select 
-            className="form-control" 
-            style={{ width: '100%', appearance: 'none' }}
-            value={filterFloor}
-            onChange={(e) => setFilterFloor(e.target.value)}
+          <button
+            onClick={() => {
+              setActiveTab('equipments');
+              setEquipPage(0);
+            }}
+            style={{
+              padding: '10px 16px',
+              fontSize: '0.88rem',
+              fontWeight: 600,
+              border: 'none',
+              background: 'none',
+              color: activeTab === 'equipments' ? 'var(--accent)' : 'var(--text-tertiary)',
+              borderBottom: activeTab === 'equipments' ? '2px solid var(--accent)' : '2px solid transparent',
+              cursor: 'pointer',
+              transition: 'all var(--transition-fast)'
+            }}
           >
-            <option value="">-- Lọc tầng --</option>
-            <option value="0">Tầng Trệt</option>
-            <option value="1">Tầng 1</option>
-            <option value="2">Tầng 2</option>
-            <option value="3">Tầng 3</option>
-            <option value="4">Tầng 4</option>
-            <option value="5">Tầng 5</option>
-          </select>
+            Quản lý Thiết bị
+          </button>
         </div>
+      )}
 
-        <div style={{ width: '180px' }}>
-          <select 
-            className="form-control" 
-            style={{ width: '100%', appearance: 'none' }}
-            value={filterCapacity}
-            onChange={(e) => setFilterCapacity(e.target.value)}
-          >
-            <option value="">-- Sức chứa --</option>
-            <option value="5">Tối thiểu 5 người</option>
-            <option value="10">Tối thiểu 10 người</option>
-            <option value="20">Tối thiểu 20 người</option>
-            <option value="50">Tối thiểu 50 người</option>
-          </select>
-        </div>
-      </div>
+      {activeTab === 'rooms' && (
+        <>
+          {/* Header controls */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem' }}>
+            <div>
+              <h2 style={{ fontSize: '1.5rem', fontWeight: 700, margin: 0 }}>Danh Sách Phòng Họp</h2>
+              <p style={{ color: 'var(--text-tertiary)', fontSize: '0.85rem' }}>Quản lý phòng họp, thiết bị, và tra cứu phòng trống</p>
+            </div>
 
-      {/* Grid listing */}
-      {isRoomsLoading ? (
-        <div className="grid-cols-3">
-          <div className="skeleton" style={{ height: '220px' }} />
-          <div className="skeleton" style={{ height: '220px' }} />
-          <div className="skeleton" style={{ height: '220px' }} />
-        </div>
-      ) : roomsData?.length === 0 ? (
-        <div className="glass-card" style={{ padding: '3rem', textAlign: 'center', color: 'var(--text-tertiary)' }}>
-          Không tìm thấy phòng họp nào khớp với bộ lọc của bạn.
-        </div>
-      ) : (
-        <div className="grid-cols-3">
-          {roomsData?.map((room: any) => (
-            <div 
-              key={room.id} 
-              className="glass-card glass-card-hover" 
-              style={{ display: 'flex', flexDirection: 'column', justifyContent: 'space-between', minHeight: '230px' }}
-            >
-              <div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.5rem' }}>
-                  <h3 style={{ fontSize: '1.2rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--text-primary)' }}>
-                    <DoorOpen size={20} style={{ color: 'var(--accent)' }} />
-                    {room.roomName}
-                  </h3>
-                  <span className="badge badge-approved" style={{ fontSize: '0.65rem' }}>
-                    {room.building?.buildingName || 'Tòa A'}
-                  </span>
-                </div>
-
-                <p style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)', marginBottom: '0.75rem' }}>
-                  {room.description || 'Không có mô tả chi tiết phòng họp.'}
-                </p>
-
-                {/* Badges for capacity & floor */}
-                <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem', flexWrap: 'wrap' }}>
-                  <span style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', fontSize: '0.75rem', backgroundColor: 'var(--bg-tertiary)', padding: '0.25rem 0.5rem', borderRadius: 'var(--radius-sm)' }}>
-                    <Users size={12} /> {room.capacity} chỗ ngồi
-                  </span>
-                  <span style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', fontSize: '0.75rem', backgroundColor: 'var(--bg-tertiary)', padding: '0.25rem 0.5rem', borderRadius: 'var(--radius-sm)' }}>
-                    <Layers size={12} /> Tầng {room.floorNumber}
-                  </span>
-                </div>
-
-                {/* Equipments inside room */}
-                {room.equipments && room.equipments.length > 0 && (
-                  <div style={{ marginBottom: '1.25rem' }}>
-                    <span style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-primary)', display: 'block', marginBottom: '0.25rem' }}>Thiết bị đi kèm:</span>
-                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.25rem' }}>
-                      {room.equipments.map((eq: any, index: number) => (
-                        <span 
-                          key={index}
-                          style={{
-                            fontSize: '0.7rem',
-                            color: 'var(--accent)',
-                            backgroundColor: 'var(--accent-light)',
-                            padding: '1px 6px',
-                            borderRadius: '4px',
-                            border: '1px solid var(--accent-border)'
-                          }}
-                        >
-                          {eq.equipmentName || eq.name} x{eq.quantity || eq.usingQuantity}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              {/* Action row */}
-              <div 
-                style={{ 
-                  display: 'flex', 
-                  justifyContent: 'space-between', 
-                  alignItems: 'center', 
-                  borderTop: '1px solid var(--border-light)', 
-                  paddingTop: '0.75rem',
-                  marginTop: '0.5rem'
+            {isAdmin && (
+              <button
+                className="btn btn-primary"
+                onClick={() => {
+                  setSelectedRoom(null);
+                  resetRoomForm({ roomName: '', capacity: 1, floorNumber: 0, description: '', buildingId: 1, equipments: [] });
+                  setActiveModal('create');
                 }}
               >
-                <button 
-                  onClick={() => handleOverlapClick(room)}
-                  className="btn btn-ghost" 
-                  style={{ fontSize: '0.75rem', padding: '0.4rem 0.75rem', color: 'var(--accent)' }}
-                >
-                  <Activity size={14} /> Kiểm tra trống
-                </button>
+                <Plus size={16} /> Tạo phòng họp mới
+              </button>
+            )}
+          </div>
 
-                <div style={{ display: 'flex', gap: '0.25rem' }}>
-                  {isAdmin && (
-                    <>
-                      <button 
-                        onClick={() => handleEditClick(room)}
-                        className="btn btn-ghost" 
-                        style={{ padding: '6px', minWidth: 'auto', color: 'var(--text-secondary)' }}
-                        title="Chỉnh sửa phòng"
-                      >
-                        <Edit3 size={14} />
-                      </button>
-                      <button 
-                        onClick={() => handleDelete(room.id, room.roomName)}
-                        className="btn btn-ghost" 
-                        style={{ padding: '6px', minWidth: 'auto', color: 'var(--danger)' }}
-                        title="Xóa phòng"
-                      >
-                        <Trash2 size={14} />
-                      </button>
-                    </>
-                  )}
-                </div>
-              </div>
+          {/* Filter panel */}
+          <div className="glass-card" style={{ display: 'flex', flexWrap: 'wrap', gap: '1rem', padding: '1rem' }}>
+            <div style={{ flexGrow: 1, minWidth: '240px', position: 'relative' }}>
+              <span style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-tertiary)' }}>
+                <Search size={16} />
+              </span>
+              <input
+                type="text"
+                className="form-control"
+                style={{ width: '100%', paddingLeft: '2.5rem' }}
+                placeholder="Tìm theo tên phòng họp..."
+                value={keyword}
+                onChange={(e) => setKeyword(e.target.value)}
+              />
             </div>
-          ))}
+
+
+            <input
+              type="number"
+              className="form-control"
+              style={{ width: '130px' }}
+              placeholder="Nhập số tầng..."
+              value={filterFloor}
+              onChange={(e) => handleFloorChange(Math.max(Number(e.target.value), 0).toString())}
+            />
+
+            <input
+              type="number"
+              className="form-control"
+              style={{ width: '150px' }}
+              placeholder="Nhập sức chứa..."
+              value={filterCapacity}
+              onChange={(e) => handleCapacityChange(Math.max(Number(e.target.value), 1).toString())}
+            />
+
+            <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+              <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Từ:</span>
+              <input
+                type="datetime-local"
+                className="form-control"
+                style={{ width: '200px' }}
+                value={filterStart}
+                onChange={(e) => {
+                  setFilterStart(e.target.value);
+                  if (e.target.value !== '') {
+                    setFilterFloor('');
+                    setFilterCapacity('');
+                  }
+                }}
+              />
+            </div>
+
+            <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+              <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Đến:</span>
+              <input
+                type="datetime-local"
+                className="form-control"
+                style={{ width: '200px' }}
+                value={filterEnd}
+                onChange={(e) => {
+                  setFilterEnd(e.target.value);
+                  if (e.target.value !== '') {
+                    setFilterFloor('');
+                    setFilterCapacity('');
+                  }
+                }}
+              />
+            </div>
+          </div>
+
+          {/* Grid listing */}
+          {isRoomsLoading ? (
+            <div className="grid-cols-3">
+              <div className="skeleton" style={{ height: '220px' }} />
+              <div className="skeleton" style={{ height: '220px' }} />
+              <div className="skeleton" style={{ height: '220px' }} />
+            </div>
+          ) : roomsData?.length === 0 ? (
+            <div className="glass-card" style={{ padding: '3rem', textAlign: 'center', color: 'var(--text-tertiary)' }}>
+              Không tìm thấy phòng họp nào khớp với bộ lọc của bạn.
+            </div>
+          ) : (
+            <div className="grid-cols-3">
+              {roomsData?.map((room: any) => (
+                <div
+                  key={room.id}
+                  className="glass-card glass-card-hover"
+                  style={{ display: 'flex', flexDirection: 'column', justifyContent: 'space-between', minHeight: '230px' }}
+                >
+                  <div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.5rem' }}>
+                      <h3 style={{ fontSize: '1.2rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--text-primary)' }}>
+                        <DoorOpen size={20} style={{ color: 'var(--accent)' }} />
+                        {room.roomName}
+                      </h3>
+                      <span className="badge badge-approved" style={{ fontSize: '0.65rem' }}>
+                        {room.building?.buildingName || 'Tòa A'}
+                      </span>
+                    </div>
+
+                    <p style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)', marginBottom: '0.75rem' }}>
+                      {room.description || 'Không có mô tả chi tiết phòng họp.'}
+                    </p>
+
+                    {/* Badges for capacity & floor */}
+                    <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem', flexWrap: 'wrap' }}>
+                      <span style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', fontSize: '0.75rem', backgroundColor: 'var(--bg-tertiary)', padding: '0.25rem 0.5rem', borderRadius: 'var(--radius-sm)' }}>
+                        <Users size={12} /> {room.capacity} chỗ ngồi
+                      </span>
+                      <span style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', fontSize: '0.75rem', backgroundColor: 'var(--bg-tertiary)', padding: '0.25rem 0.5rem', borderRadius: 'var(--radius-sm)' }}>
+                        <Layers size={12} /> Tầng {room.floorNumber}
+                      </span>
+                    </div>
+
+                    {/* Equipments inside room */}
+                    {room.equipments && room.equipments.length > 0 && (
+                      <div style={{ marginBottom: '1.25rem' }}>
+                        <span style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-primary)', display: 'block', marginBottom: '0.25rem' }}>Thiết bị đi kèm:</span>
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.25rem' }}>
+                          {room.equipments.map((eq: any, index: number) => (
+                            <span
+                              key={index}
+                              style={{
+                                fontSize: '0.7rem',
+                                color: 'var(--accent)',
+                                backgroundColor: 'var(--accent-light)',
+                                padding: '1px 6px',
+                                borderRadius: '4px',
+                                border: '1px solid var(--accent-border)'
+                              }}
+                            >
+                              {eq.equipmentName || eq.name} x{eq.quantity || eq.usingQuantity}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Action row */}
+                  <div
+                    style={{
+                      display: 'flex',
+                      justifyContent: 'flex-end',
+                      alignItems: 'center',
+                      borderTop: '1px solid var(--border-light)',
+                      paddingTop: '0.75rem',
+                      marginTop: '0.5rem',
+                      gap: '0.5rem'
+                    }}
+                  >
+                    <button
+                      onClick={() => handleBookClick(room)}
+                      className="btn btn-ghost"
+                      style={{ fontSize: '0.75rem', padding: '0.4rem 0.75rem', color: 'var(--success)', display: 'flex', alignItems: 'center', gap: '4px' }}
+                    >
+                      <Calendar size={14} /> Đăng ký lịch
+                    </button>
+
+                    {isAdmin && (
+                      <div style={{ display: 'flex', gap: '0.25rem', alignItems: 'center' }}>
+                        <button
+                          onClick={() => handleEditClick(room)}
+                          className="btn btn-ghost"
+                          style={{ padding: '6px', minWidth: 'auto', color: 'var(--text-secondary)' }}
+                          title="Chỉnh sửa phòng"
+                        >
+                          <Edit3 size={14} />
+                        </button>
+                        <button
+                          onClick={() => handleDelete(room.id, room.roomName)}
+                          className="btn btn-ghost"
+                          style={{ padding: '6px', minWidth: 'auto', color: 'var(--danger)' }}
+                          title="Xóa phòng"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+
+      {activeTab === 'equipments' && isAdmin && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+          {/* Header controls for Equipments */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem' }}>
+            <div>
+              <h2 style={{ fontSize: '1.4rem', fontWeight: 700, margin: 0 }}>Quản Lý Thiết Bị</h2>
+              <p style={{ color: 'var(--text-tertiary)', fontSize: '0.85rem' }}>Danh mục thiết bị phục vụ các cuộc họp</p>
+            </div>
+
+            <button
+              className="btn btn-primary"
+              onClick={() => {
+                setSelectedEquip(null);
+                resetEquipForm({ equipmentName: '', description: '', availableQuantity: 1 });
+                setActiveModal('create-equip');
+              }}
+            >
+              <Plus size={16} /> Thêm thiết bị mới
+            </button>
+          </div>
+
+          {/* Search toolbar */}
+          <div className="glass-card" style={{ display: 'flex', alignItems: 'center', padding: '0.75rem 1rem' }}>
+            <div style={{ position: 'relative', flexGrow: 1, maxWidth: '400px' }}>
+              <span style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-tertiary)' }}>
+                <Search size={16} />
+              </span>
+              <input
+                type="text"
+                className="form-control"
+                style={{ width: '100%', paddingLeft: '2.5rem' }}
+                placeholder="Tìm theo tên thiết bị..."
+                value={equipKeyword}
+                onChange={(e) => {
+                  setEquipKeyword(e.target.value);
+                  setEquipPage(0);
+                }}
+              />
+            </div>
+          </div>
+
+          {/* Equipments Listing */}
+          {isEquipLoading ? (
+            <div className="grid-cols-3">
+              <div className="skeleton" style={{ height: '150px' }} />
+              <div className="skeleton" style={{ height: '150px' }} />
+              <div className="skeleton" style={{ height: '150px' }} />
+            </div>
+          ) : equipList.length === 0 ? (
+            <div className="glass-card" style={{ padding: '3rem', textAlign: 'center', color: 'var(--text-tertiary)' }}>
+              Không tìm thấy thiết bị nào khớp với từ khóa của bạn.
+            </div>
+          ) : (
+            <>
+              <div className="grid-cols-3">
+                {equipList.map((eq: any) => (
+                  <div
+                    key={eq.equipmentId}
+                    className="glass-card"
+                    style={{ display: 'flex', flexDirection: 'column', justifyContent: 'space-between', minHeight: '140px', borderLeft: '4px solid var(--accent)' }}
+                  >
+                    <div>
+                      <h4 style={{ margin: '0 0 0.5rem 0', fontSize: '1.05rem', color: 'var(--text-primary)', fontWeight: 600 }}>
+                        {eq.equipmentName}
+                      </h4>
+                      <p style={{ margin: '0 0 0.75rem 0', fontSize: '0.8rem', color: 'var(--text-tertiary)', minHeight: '36px' }}>
+                        {eq.description || 'Không có mô tả chi tiết thiết bị.'}
+                      </p>
+                      <span className="badge badge-approved" style={{ fontSize: '0.72rem' }}>
+                        Tổng số lượng: {eq.availableQuantity}
+                      </span>
+                    </div>
+
+                    <div style={{ display: 'flex', gap: '0.5rem', borderTop: '1px solid var(--border-light)', paddingTop: '0.5rem', marginTop: '0.75rem', justifyContent: 'flex-end' }}>
+                      <button
+                        onClick={() => handleEditEquipClick(eq)}
+                        className="btn btn-ghost"
+                        style={{ padding: '4px 8px', fontSize: '0.75rem', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '4px' }}
+                      >
+                        <Edit3 size={12} /> Sửa
+                      </button>
+                      <button
+                        onClick={() => handleDeleteEquip(eq.equipmentId, eq.equipmentName)}
+                        className="btn btn-ghost"
+                        style={{ padding: '4px 8px', fontSize: '0.75rem', color: 'var(--danger)', display: 'flex', alignItems: 'center', gap: '4px' }}
+                      >
+                        <Trash2 size={12} /> Xóa
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Equipments Pagination */}
+              {equipTotalPages > 1 && (
+                <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '0.5rem', marginTop: '1rem' }}>
+                  <button
+                    className="btn btn-secondary"
+                    disabled={equipPage === 0}
+                    onClick={() => setEquipPage((p) => Math.max(0, p - 1))}
+                    style={{ padding: '6px 12px', fontSize: '0.82rem' }}
+                  >
+                    Trước
+                  </button>
+                  <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                    Trang {equipPage + 1} / {equipTotalPages}
+                  </span>
+                  <button
+                    className="btn btn-secondary"
+                    disabled={equipPage >= equipTotalPages - 1}
+                    onClick={() => setEquipPage((p) => Math.min(equipTotalPages - 1, p + 1))}
+                    style={{ padding: '6px 12px', fontSize: '0.82rem' }}
+                  >
+                    Sau
+                  </button>
+                </div>
+              )}
+            </>
+          )}
         </div>
       )}
 
@@ -440,15 +898,15 @@ export const Rooms: React.FC = () => {
                 <XCircle size={20} />
               </button>
             </div>
-            
+
             <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
               <div className="grid-cols-2" style={{ gap: '1rem' }}>
                 <div className="form-group">
                   <label className="form-label" htmlFor="room-name">Tên phòng họp *</label>
-                  <input 
+                  <input
                     id="room-name"
-                    className="form-control" 
-                    placeholder="Phòng VIP / Meeting Room A" 
+                    className="form-control"
+                    placeholder="Phòng VIP / Meeting Room A"
                     {...roomRegister('roomName')}
                   />
                   {roomErrors.roomName && <span className="form-error">{roomErrors.roomName.message}</span>}
@@ -456,9 +914,9 @@ export const Rooms: React.FC = () => {
 
                 <div className="form-group">
                   <label className="form-label" htmlFor="room-building">Thuộc Tòa Nhà *</label>
-                  <select 
+                  <select
                     id="room-building"
-                    className="form-control" 
+                    className="form-control"
                     {...roomRegister('buildingId')}
                   >
                     {buildings?.map((b: any) => (
@@ -472,11 +930,11 @@ export const Rooms: React.FC = () => {
               <div className="grid-cols-2" style={{ gap: '1rem' }}>
                 <div className="form-group">
                   <label className="form-label" htmlFor="room-capacity">Sức chứa (người) *</label>
-                  <input 
+                  <input
                     id="room-capacity"
-                    type="number" 
-                    className="form-control" 
-                    placeholder="12" 
+                    type="number"
+                    className="form-control"
+                    placeholder="12"
                     {...roomRegister('capacity')}
                   />
                   {roomErrors.capacity && <span className="form-error">{roomErrors.capacity.message}</span>}
@@ -484,11 +942,11 @@ export const Rooms: React.FC = () => {
 
                 <div className="form-group">
                   <label className="form-label" htmlFor="room-floor">Ở Tầng số *</label>
-                  <input 
+                  <input
                     id="room-floor"
-                    type="number" 
-                    className="form-control" 
-                    placeholder="2" 
+                    type="number"
+                    className="form-control"
+                    placeholder="2"
                     {...roomRegister('floorNumber')}
                   />
                   {roomErrors.floorNumber && <span className="form-error">{roomErrors.floorNumber.message}</span>}
@@ -497,9 +955,9 @@ export const Rooms: React.FC = () => {
 
               <div className="form-group">
                 <label className="form-label" htmlFor="room-desc">Mô tả đặc điểm phòng họp</label>
-                <textarea 
+                <textarea
                   id="room-desc"
-                  className="form-control" 
+                  className="form-control"
                   style={{ minHeight: '60px', resize: 'vertical' }}
                   placeholder="Bàn tròn rộng, tivi trình chiếu 75 inch..."
                   {...roomRegister('description')}
@@ -510,11 +968,12 @@ export const Rooms: React.FC = () => {
               <div style={{ borderTop: '1px solid var(--border-light)', paddingTop: '1rem' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
                   <span className="form-label">Thiết bị có sẵn trong phòng</span>
-                  <button 
-                    type="button" 
-                    className="btn btn-ghost" 
+                  <button
+                    type="button"
+                    className="btn btn-ghost"
                     style={{ fontSize: '0.75rem', padding: '4px 8px', color: 'var(--accent)' }}
-                    onClick={() => append({ equipmentId: 1, quantity: 1 })}
+                    onClick={handleAddEquipmentRow}
+                    disabled={equipmentsList && fields.length >= equipmentsList.length}
                   >
                     <ListPlus size={14} /> Thêm thiết bị
                   </button>
@@ -523,27 +982,28 @@ export const Rooms: React.FC = () => {
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', maxHeight: '180px', overflowY: 'auto' }}>
                   {fields.map((field, index) => (
                     <div key={field.id} style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-                      <select 
-                        className="form-control" 
+                      <select
+                        className="form-control"
                         style={{ flexGrow: 1 }}
                         {...roomRegister(`equipments.${index}.equipmentId` as const)}
                       >
-                        {equipmentsList?.map((eq: any) => (
-                          <option key={eq.id} value={eq.id}>{eq.equipmentName}</option>
+                        <option value="">-- Chọn thiết bị --</option>
+                        {getAvailableEquipments(index).map((eq: any) => (
+                          <option key={eq.equipmentId} value={eq.equipmentId}>{eq.equipmentName}</option>
                         ))}
                       </select>
-                      
-                      <input 
-                        type="number" 
-                        className="form-control" 
-                        style={{ width: '80px' }} 
+
+                      <input
+                        type="number"
+                        className="form-control"
+                        style={{ width: '80px' }}
                         placeholder="SL"
                         {...roomRegister(`equipments.${index}.quantity` as const)}
                       />
 
-                      <button 
-                        type="button" 
-                        className="btn btn-ghost" 
+                      <button
+                        type="button"
+                        className="btn btn-ghost"
                         style={{ color: 'var(--danger)', padding: '6px', minWidth: 'auto' }}
                         onClick={() => remove(index)}
                       >
@@ -557,8 +1017,8 @@ export const Rooms: React.FC = () => {
 
             <div className="modal-footer">
               <button type="button" className="btn btn-secondary" onClick={() => setActiveModal(null)}>Hủy</button>
-              <button 
-                type="submit" 
+              <button
+                type="submit"
                 className="btn btn-primary"
                 disabled={createRoomMutation.isPending || updateRoomMutation.isPending}
               >
@@ -569,91 +1029,237 @@ export const Rooms: React.FC = () => {
         </div>
       )}
 
-      {/* CHECK OVERLAP ALTERNATIVE ROOMS MODAL */}
-      {activeModal === 'overlap' && (
+
+
+      {/* DIRECT BOOKING MODAL */}
+      {activeModal === 'book' && selectedRoom && (
         <div className="modal-overlay">
-          <div className="modal-content" style={{ maxWidth: '500px' }}>
+          <form onSubmit={handleBookingSubmit(onSaveBooking)} className="modal-content" style={{ maxWidth: '650px' }}>
             <div className="modal-header">
-              <h3 style={{ margin: 0, fontSize: '1.15rem' }}>Tra cứu phòng trống song song</h3>
+              <h3 style={{ margin: 0, fontSize: '1.15rem' }}>
+                Đăng ký phòng họp: <strong>{selectedRoom.roomName}</strong>
+              </h3>
               <button type="button" className="btn btn-ghost" style={{ padding: '4px', minWidth: 'auto' }} onClick={() => setActiveModal(null)}>
                 <XCircle size={20} />
               </button>
             </div>
 
-            <div className="modal-body">
-              <p style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)', marginBottom: '1rem' }}>
-                Nếu phòng <strong>{selectedRoom?.roomName}</strong> bị bận trong khoảng thời gian này, hệ thống sẽ tự động lọc ra các phòng trống khác cho bạn.
-              </p>
+            <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+              <input type="hidden" {...bookingRegister('roomId')} value={selectedRoom.id} />
 
-              <form onSubmit={handleOverlapSubmit(onCheckOverlap)} style={{ display: 'flex', flexDirection: 'column', gap: '1rem', marginBottom: '1.5rem' }}>
+              <div className="form-group">
+                <label className="form-label" htmlFor="book-title">Tiêu đề cuộc họp *</label>
+                <input
+                  id="book-title"
+                  className="form-control"
+                  placeholder="Họp tổng kết tuần / Kick-off dự án..."
+                  {...bookingRegister('title')}
+                />
+                {bookingErrors.title && <span className="form-error">{bookingErrors.title.message}</span>}
+              </div>
+
+              <div className="form-group">
+                <label className="form-label" htmlFor="book-desc">Mô tả nội dung cuộc họp</label>
+                <textarea
+                  id="book-desc"
+                  className="form-control"
+                  style={{ minHeight: '50px', resize: 'vertical' }}
+                  placeholder="Thảo luận kế hoạch phát triển quý tiếp theo..."
+                  {...bookingRegister('description')}
+                />
+              </div>
+
+              <div className="grid-cols-2" style={{ gap: '1rem' }}>
                 <div className="form-group">
-                  <label className="form-label" htmlFor="overlap-start">Giờ Bắt Đầu</label>
-                  <input 
-                    id="overlap-start"
-                    type="datetime-local" 
-                    className="form-control" 
-                    {...overlapRegister('start')}
+                  <label className="form-label">Phòng họp được chọn</label>
+                  <input
+                    className="form-control"
+                    value={`${selectedRoom.roomName} (Tầng ${selectedRoom.floorNumber})`}
+                    disabled
                   />
-                  {overlapErrors.start && <span className="form-error">{overlapErrors.start.message}</span>}
                 </div>
 
                 <div className="form-group">
-                  <label className="form-label" htmlFor="overlap-end">Giờ Kết Thúc</label>
-                  <input 
-                    id="overlap-end"
-                    type="datetime-local" 
-                    className="form-control" 
-                    {...overlapRegister('end')}
+                  <label className="form-label" htmlFor="book-attendees">Số người tham dự họp *</label>
+                  <input
+                    id="book-attendees"
+                    type="number"
+                    className="form-control"
+                    placeholder="8"
+                    {...bookingRegister('attendee')}
                   />
-                  {overlapErrors.end && <span className="form-error">{overlapErrors.end.message}</span>}
+                  {bookingErrors.attendee && <span className="form-error">{bookingErrors.attendee.message}</span>}
+                </div>
+              </div>
+
+              <div className="grid-cols-2" style={{ gap: '1rem' }}>
+                <div className="form-group">
+                  <label className="form-label" htmlFor="book-start">Thời gian bắt đầu *</label>
+                  <input
+                    id="book-start"
+                    type="datetime-local"
+                    className="form-control"
+                    {...bookingRegister('start')}
+                  />
+                  {bookingErrors.start && <span className="form-error">{bookingErrors.start.message}</span>}
                 </div>
 
-                <button type="submit" className="btn btn-primary" disabled={checkOverlapMutation.isPending}>
-                  {checkOverlapMutation.isPending ? 'Đang truy vấn...' : 'Truy vấn phòng trống'}
-                </button>
-              </form>
-
-              {/* Alternative Rooms results */}
-              {checkOverlapMutation.isSuccess && (
-                <div style={{ borderTop: '1px solid var(--border-light)', paddingTop: '1rem' }}>
-                  <h4 style={{ fontSize: '0.9rem', fontWeight: 700, marginBottom: '0.75rem', color: 'var(--text-primary)' }}>
-                    Danh sách phòng khả dụng ({alternativeRooms.length})
-                  </h4>
-
-                  {alternativeRooms.length === 0 ? (
-                    <div style={{ padding: '1rem', backgroundColor: 'var(--bg-tertiary)', borderRadius: 'var(--radius-md)', fontSize: '0.8rem', textAlign: 'center' }}>
-                      Không tìm thấy phòng nào trống trong khoảng thời gian đã chọn.
-                    </div>
-                  ) : (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', maxHeight: '180px', overflowY: 'auto' }}>
-                      {alternativeRooms.map((r: any) => (
-                        <div 
-                          key={r.id}
-                          style={{
-                            padding: '0.75rem',
-                            borderRadius: 'var(--radius-md)',
-                            backgroundColor: 'var(--bg-primary)',
-                            border: '1px solid var(--border-light)',
-                            display: 'flex',
-                            justifyContent: 'space-between',
-                            alignItems: 'center'
-                          }}
-                        >
-                          <div>
-                            <span style={{ fontWeight: 600, fontSize: '0.85rem', color: 'var(--text-primary)' }}>{r.roomName}</span>
-                            <span style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)', marginLeft: '0.5rem' }}>(Tầng {r.floorNumber})</span>
-                          </div>
-                          <span style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--success)' }}>
-                            <CheckCircle size={12} style={{ display: 'inline', marginRight: '2px' }} /> Sẵn sàng
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
+                <div className="form-group">
+                  <label className="form-label" htmlFor="book-end">Thời gian kết thúc *</label>
+                  <input
+                    id="book-end"
+                    type="datetime-local"
+                    className="form-control"
+                    {...bookingRegister('end')}
+                  />
+                  {bookingErrors.end && <span className="form-error">{bookingErrors.end.message}</span>}
                 </div>
-              )}
+              </div>
+
+              {/* Receivers emails invite */}
+              <div className="form-group">
+                <label className="form-label" htmlFor="book-receivers">Mời đại biểu tham dự (Email cách nhau bởi dấu phẩy)</label>
+                <div style={{ position: 'relative' }}>
+                  <span style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-tertiary)' }}>
+                    <Mail size={16} />
+                  </span>
+                  <input
+                    id="book-receivers"
+                    className="form-control"
+                    style={{ width: '100%', paddingLeft: '2.5rem' }}
+                    placeholder="partner@company.com, ceo@company.com"
+                    {...bookingRegister('receiversInput')}
+                  />
+                </div>
+              </div>
+
+              {/* Booking equipments additional allocation */}
+              <div style={{ borderTop: '1px solid var(--border-light)', paddingTop: '1rem' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
+                  <span className="form-label">Thiết bị họp bổ sung cần chuẩn bị</span>
+                  <button
+                    type="button"
+                    className="btn btn-ghost"
+                    style={{ fontSize: '0.75rem', padding: '4px 8px', color: 'var(--accent)' }}
+                    onClick={handleAddBookingEquipmentRow}
+                    disabled={equipmentsList && bookingFields.length >= equipmentsList.length}
+                  >
+                    <ListPlus size={14} /> Thêm thiết bị
+                  </button>
+                </div>
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', maxHeight: '150px', overflowY: 'auto' }}>
+                  {bookingFields.map((field, index) => (
+                    <div key={field.id} style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                      <select
+                        className="form-control"
+                        style={{ flexGrow: 1 }}
+                        {...bookingRegister(`equipments.${index}.equipmentId` as const)}
+                      >
+                        <option value="">-- Chọn thiết bị --</option>
+                        {getAvailableBookingEquipments(index).map((eq: any) => (
+                          <option key={eq.equipmentId} value={eq.equipmentId}>
+                            {eq.equipmentName}
+                          </option>
+                        ))}
+                      </select>
+
+                      <input
+                        type="number"
+                        className="form-control"
+                        style={{ width: '80px' }}
+                        placeholder="SL"
+                        {...bookingRegister(`equipments.${index}.quantity` as const)}
+                      />
+
+                      <button
+                        type="button"
+                        className="btn btn-ghost"
+                        style={{ color: 'var(--danger)', padding: '6px', minWidth: 'auto' }}
+                        onClick={() => bookingRemove(index)}
+                      >
+                        <Trash2 size={16} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
             </div>
-          </div>
+
+            <div className="modal-footer">
+              <button type="button" className="btn btn-secondary" onClick={() => setActiveModal(null)}>Hủy</button>
+              <button
+                type="submit"
+                className="btn btn-primary"
+                disabled={createBookingFromRoomMutation.isPending}
+              >
+                {createBookingFromRoomMutation.isPending ? 'Đang gửi yêu cầu...' : 'Gửi Đăng Ký'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {/* CREATE & EDIT EQUIPMENT MODAL */}
+      {(activeModal === 'create-equip' || activeModal === 'edit-equip') && (
+        <div className="modal-overlay">
+          <form onSubmit={handleEquipSubmit(onSaveEquip)} className="modal-content" style={{ maxWidth: '500px' }}>
+            <div className="modal-header">
+              <h3 style={{ margin: 0, fontSize: '1.15rem' }}>
+                {activeModal === 'create-equip' ? 'Thêm thiết bị mới' : 'Chỉnh sửa thiết bị'}
+              </h3>
+              <button type="button" className="btn btn-ghost" style={{ padding: '4px', minWidth: 'auto' }} onClick={() => setActiveModal(null)}>
+                <XCircle size={20} />
+              </button>
+            </div>
+
+            <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+              <div className="form-group">
+                <label className="form-label" htmlFor="equip-name">Tên thiết bị *</label>
+                <input
+                  id="equip-name"
+                  className="form-control"
+                  placeholder="Tivi Samsung 75 inch, Bảng di động..."
+                  {...equipRegister('equipmentName')}
+                />
+                {equipErrors.equipmentName && <span className="form-error">{equipErrors.equipmentName.message}</span>}
+              </div>
+
+              <div className="form-group">
+                <label className="form-label" htmlFor="equip-desc">Mô tả đặc điểm thiết bị</label>
+                <textarea
+                  id="equip-desc"
+                  className="form-control"
+                  style={{ minHeight: '60px', resize: 'vertical' }}
+                  placeholder="Nhập mô tả tại đây..."
+                  {...equipRegister('description')}
+                />
+              </div>
+
+              <div className="form-group">
+                <label className="form-label" htmlFor="equip-quantity">Tổng số lượng sở hữu *</label>
+                <input
+                  id="equip-quantity"
+                  type="number"
+                  className="form-control"
+                  placeholder="10"
+                  {...equipRegister('availableQuantity')}
+                />
+                {equipErrors.availableQuantity && <span className="form-error">{equipErrors.availableQuantity.message}</span>}
+              </div>
+            </div>
+
+            <div className="modal-footer">
+              <button type="button" className="btn btn-secondary" onClick={() => setActiveModal(null)}>Hủy</button>
+              <button
+                type="submit"
+                className="btn btn-primary"
+                disabled={createEquipMutation.isPending || updateEquipMutation.isPending}
+              >
+                {createEquipMutation.isPending || updateEquipMutation.isPending ? 'Đang lưu...' : 'Lưu'}
+              </button>
+            </div>
+          </form>
         </div>
       )}
     </div>

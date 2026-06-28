@@ -7,14 +7,14 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useForm, useFieldArray } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
-import { 
-  Calendar as CalendarIcon, 
-  List, 
-  Plus, 
-  Clock, 
-  MapPin, 
-  Users, 
-  X, 
+import {
+  Calendar as CalendarIcon,
+  List,
+  Plus,
+  Clock,
+  MapPin,
+  Users,
+  X,
   ChevronLeft,
   ChevronRight,
   UserCheck,
@@ -22,6 +22,28 @@ import {
   XCircle,
   FileSpreadsheet
 } from 'lucide-react';
+
+// Helper to format date string to "yyyy-MM-dd HH:mm:ssXXX"
+const formatDateTimeForApi = (dateTimeStr: string): string => {
+  if (!dateTimeStr) return '';
+  const date = new Date(dateTimeStr);
+  const pad = (num: number) => String(num).padStart(2, '0');
+
+  const yyyy = date.getFullYear();
+  const MM = pad(date.getMonth() + 1);
+  const dd = pad(date.getDate());
+  const hh = pad(date.getHours());
+  const mm = pad(date.getMinutes());
+  const ss = pad(date.getSeconds());
+
+  const offsetMinutes = date.getTimezoneOffset();
+  const offsetSign = offsetMinutes <= 0 ? '+' : '-';
+  const absOffsetMinutes = Math.abs(offsetMinutes);
+  const offsetHours = pad(Math.floor(absOffsetMinutes / 60));
+  const offsetMins = pad(absOffsetMinutes % 60);
+
+  return `${yyyy}-${MM}-${dd} ${hh}:${mm}:${ss}${offsetSign}${offsetHours}:${offsetMins}`;
+};
 
 // Zod schemas
 const bookingFormSchema = z.object({
@@ -60,10 +82,25 @@ export const Bookings: React.FC = () => {
   const [filterStatus, setFilterStatus] = useState('');
   const [filterOrganizer, setFilterOrganizer] = useState('');
 
+  // Sub-tabs for Approver
+  const isApprover = hasAuthority('BOOKING:APPROVE');
+  const [activeSubTab, setActiveSubTab] = useState<'scheduler' | 'approvals'>('scheduler');
+
   // Modals state
-  const [activeModal, setActiveModal] = useState<'create' | 'detail' | 'edit' | null>(null);
+  const [activeModal, setActiveModal] = useState<'create' | 'detail' | 'edit' | 'approval-detail' | null>(null);
   const [selectedBooking, setSelectedBooking] = useState<any>(null);
+  const [selectedHistory, setSelectedHistory] = useState<any>(null);
   const [notes, setNotes] = useState('');
+
+  // Fetch pending approvals for Approver
+  const { data: pendingApprovals, isLoading: isPendingApprovalsLoading } = useQuery({
+    queryKey: ['bookings', 'pending'],
+    queryFn: async () => {
+      const response = await apiClient.get('/booking/pending?page=0&size=100');
+      return response.data?.data?.content || [];
+    },
+    enabled: isApprover,
+  });
 
   // 1. Fetch Rooms for dropdowns
   const { data: rooms } = useQuery({
@@ -120,12 +157,12 @@ export const Bookings: React.FC = () => {
   }, [bookingDetail]);
 
   // Form Hooks
-  const { 
-    register, 
-    handleSubmit, 
-    reset, 
+  const {
+    register,
+    handleSubmit,
+    reset,
     control,
-    formState: { errors } 
+    formState: { errors }
   } = useForm<BookingFormValues>({
     resolver: zodResolver(bookingFormSchema) as any,
     defaultValues: { equipments: [] }
@@ -139,13 +176,13 @@ export const Bookings: React.FC = () => {
   // CREATE BOOKING MUTATION
   const createBookingMutation = useMutation({
     mutationFn: async (data: BookingFormValues) => {
-      const startDateTime = new Date(data.start).toISOString();
-      const endDateTime = new Date(data.end).toISOString();
+      const startDateTime = formatDateTimeForApi(data.start);
+      const endDateTime = formatDateTimeForApi(data.end);
       // Split email receivers list
       const receivers = data.receiversInput
         ? data.receiversInput.split(',').map((e) => e.trim()).filter((e) => e.length > 0)
         : [];
-      
+
       const payload = {
         roomId: data.roomId,
         userId: user?.id || 1,
@@ -157,7 +194,7 @@ export const Bookings: React.FC = () => {
         equipments: data.equipments || [],
         receivers
       };
-      
+
       await apiClient.post('/booking', payload);
     },
     onSuccess: () => {
@@ -189,36 +226,40 @@ export const Bookings: React.FC = () => {
     }
   });
 
+
+
   // APPROVE BOOKING MUTATION
   const approveMutation = useMutation({
-    mutationFn: async ({ id, note }: { id: number; note: string }) => {
-      await apiClient.patch(`/booking/approve/${id}`, { note });
+    mutationFn: async ({ id, actionType, newData }: { id: number; actionType: string; newData: any }) => {
+      await apiClient.patch(`/booking/approve/${id}`, { actionType, newData });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['bookings'] });
+      queryClient.invalidateQueries({ queryKey: ['bookings', 'pending'] });
       showToast('Đã phê duyệt lịch họp thành công', 'success');
       setActiveModal(null);
       setSearchParams({});
     },
     onError: (err: any) => {
-      const msg = err.response?.data?.message || 'Có lỗi xảy ra';
+      const msg = err.response?.data?.message || 'Có lỗi xảy ra khi phê duyệt';
       showToast(msg, 'error');
     }
   });
 
   // REJECT BOOKING MUTATION
   const rejectMutation = useMutation({
-    mutationFn: async ({ id, note }: { id: number; note: string }) => {
-      await apiClient.patch(`/booking/reject/${id}`, { note });
+    mutationFn: async ({ id, actionType, reason, oldPayload, newPayload }: { id: number; actionType: string; reason: string; oldPayload: any; newPayload: any }) => {
+      await apiClient.patch(`/booking/reject/${id}`, { actionType, reason, oldPayload, newPayload });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['bookings'] });
+      queryClient.invalidateQueries({ queryKey: ['bookings', 'pending'] });
       showToast('Đã từ chối lịch họp thành công', 'success');
       setActiveModal(null);
       setSearchParams({});
     },
     onError: (err: any) => {
-      const msg = err.response?.data?.message || 'Có lỗi xảy ra';
+      const msg = err.response?.data?.message || 'Có lỗi xảy ra khi từ chối';
       showToast(msg, 'error');
     }
   });
@@ -286,8 +327,129 @@ export const Bookings: React.FC = () => {
   const formatFullDate = (timeStr: string) => {
     if (!timeStr) return '';
     const d = new Date(timeStr);
-    if (isNaN(d.getTime())) return '';
     return `${d.toLocaleDateString('vi-VN')} vào lúc ${formatTime(timeStr)}`;
+  };
+
+  const getRoomNameById = (id: number) => {
+    const r = rooms?.find((item: any) => Number(item.id) === Number(id));
+    return r ? r.roomName : `Phòng #${id}`;
+  };
+
+  const renderDiffRow = (label: string, oldValue: any, newValue: any, formatFn?: (val: any) => string) => {
+    const formattedOld = formatFn ? formatFn(oldValue) : String(oldValue ?? '');
+    const formattedNew = formatFn ? formatFn(newValue) : String(newValue ?? '');
+    const isChanged = formattedOld !== formattedNew;
+
+    return (
+      <tr style={{ borderBottom: '1px solid var(--border-light)' }}>
+        <td style={{ padding: '0.75rem 0.5rem', fontWeight: 600, color: 'var(--text-secondary)', fontSize: '0.85rem' }}>{label}</td>
+        {isChanged ? (
+          <>
+            <td style={{ padding: '0.75rem 0.5rem', color: 'var(--danger)', textDecoration: 'line-through', fontSize: '0.85rem', backgroundColor: 'rgba(239, 68, 68, 0.05)' }}>
+              {formattedOld || '(trống)'}
+            </td>
+            <td style={{ padding: '0.75rem 0.5rem', color: 'var(--success)', fontWeight: 600, fontSize: '0.85rem', backgroundColor: 'rgba(16, 185, 129, 0.05)' }}>
+              {formattedNew || '(trống)'}
+            </td>
+          </>
+        ) : (
+          <td colSpan={2} style={{ padding: '0.75rem 0.5rem', color: 'var(--text-primary)', fontSize: '0.85rem' }}>
+            {formattedNew || '(trống)'}
+          </td>
+        )}
+      </tr>
+    );
+  };
+
+  const renderApprovalsList = () => {
+    const handleViewHistoryDetail = async (historyId: number) => {
+      try {
+        const response = await apiClient.get(`/booking/pending/detail/${historyId}`);
+        setSelectedHistory(response.data?.data);
+        setNotes(''); // Clear notes input
+        setActiveModal('approval-detail');
+      } catch (err: any) {
+        showToast('Không thể tải chi tiết lịch sử phê duyệt', 'error');
+      }
+    };
+
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+        <div className="glass-card" style={{ padding: '1.5rem' }}>
+          <h3 style={{ fontSize: '1.2rem', fontWeight: 600, margin: '0 0 1rem 0' }}>Yêu Cầu Chờ Phê Duyệt</h3>
+          {isPendingApprovalsLoading ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+              <div className="skeleton" style={{ height: '70px', width: '100%' }} />
+              <div className="skeleton" style={{ height: '70px', width: '100%' }} />
+            </div>
+          ) : !pendingApprovals || pendingApprovals.length === 0 ? (
+            <div style={{ padding: '3rem 1.5rem', textAlign: 'center', color: 'var(--text-tertiary)', fontStyle: 'italic' }}>
+              Không có yêu cầu đặt phòng nào đang chờ duyệt.
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+              {pendingApprovals.map((item: any) => {
+                let actionBadgeColor = 'var(--accent)';
+                let actionText = 'Đăng ký mới';
+                if (item.actionType === 'UPDATED') {
+                  actionBadgeColor = 'var(--info)';
+                  actionText = 'Thay đổi thông tin';
+                } else if (item.actionType === 'ADD_EQUIPMENT' || item.actionType === 'UPDATE_EQUIP_QUANTITY') {
+                  actionBadgeColor = 'var(--warning)';
+                  actionText = 'Cập nhật thiết bị';
+                }
+
+                return (
+                  <div
+                    key={item.historyId}
+                    className="glass-card glass-card-hover"
+                    style={{
+                      padding: '1.25rem',
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      borderLeft: `4px solid ${actionBadgeColor}`,
+                      gap: '1rem'
+                    }}
+                  >
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem', flexGrow: 1 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                        <span style={{
+                          backgroundColor: actionBadgeColor,
+                          color: '#fff',
+                          fontSize: '0.65rem',
+                          fontWeight: 700,
+                          padding: '2px 8px',
+                          borderRadius: '4px',
+                          textTransform: 'uppercase'
+                        }}>
+                          {actionText}
+                        </span>
+                        <h4 style={{ margin: 0, fontSize: '1.05rem', color: 'var(--text-primary)', fontWeight: 600 }}>{item.title}</h4>
+                      </div>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '1.25rem', fontSize: '0.8rem', color: 'var(--text-secondary)', marginTop: '0.25rem' }}>
+                        <span>📍 <strong>Phòng:</strong> {item.roomName}</span>
+                        <span>👤 <strong>Người đăng ký:</strong> {item.userBooked} ({item.phone})</span>
+                        <span>⏰ <strong>Thời gian họp:</strong> {formatTime(item.startTime)} - {formatTime(item.endTime)} ({new Date(item.startTime).toLocaleDateString('vi-VN')})</span>
+                      </div>
+                    </div>
+
+                    <button
+                      type="button"
+                      className="btn btn-primary"
+                      style={{ padding: '0.5rem 1rem', fontSize: '0.8rem' }}
+                      onClick={() => handleViewHistoryDetail(item.historyId)}
+                    >
+                      Xem & Duyệt
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+    );
   };
 
   const renderMonthCalendar = () => {
@@ -300,7 +462,7 @@ export const Bookings: React.FC = () => {
     const startOffset = firstDayIndex === 0 ? 6 : firstDayIndex - 1;
 
     const calendarCells = [];
-    
+
     const prevMonthDays = new Date(year, month, 0).getDate();
     for (let i = startOffset - 1; i >= 0; i--) {
       const dayNum = prevMonthDays - i;
@@ -350,7 +512,7 @@ export const Bookings: React.FC = () => {
           {calendarCells.map((cell, idx) => {
             const dateBookings = bookings?.filter((b: any) => b.startTime && typeof b.startTime === 'string' && b.startTime.startsWith(cell.dateString)) || [];
             const isToday = new Date().toISOString().split('T')[0] === cell.dateString;
-            
+
             let cellClasses = "calendar-day-cell";
             if (!cell.isCurrentMonth) cellClasses += " inactive";
             if (isToday) cellClasses += " today";
@@ -360,7 +522,7 @@ export const Bookings: React.FC = () => {
                 <div className="calendar-day-number">
                   {cell.dayNumber}
                 </div>
-                
+
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', flexGrow: 1, overflow: 'hidden' }}>
                   {dateBookings.slice(0, 2).map((b: any) => {
                     let badgeClass = "calendar-event-badge";
@@ -371,7 +533,7 @@ export const Bookings: React.FC = () => {
                     else badgeClass += " pending";
 
                     return (
-                      <div 
+                      <div
                         key={b.id}
                         onClick={(e) => {
                           e.stopPropagation();
@@ -393,7 +555,7 @@ export const Bookings: React.FC = () => {
 
                 {/* Hover Popover containing full detail list of bookings of this day */}
                 {dateBookings.length > 0 && (
-                  <div className="calendar-day-popover">
+                  <div className="calendar-day-popover" style={{ left: '100%', zIndex: 10, minWidth: '260px' }}>
                     <div className="calendar-day-popover-header">
                       Ngày {cell.dayNumber} - {dateBookings.length} lịch họp
                     </div>
@@ -406,7 +568,7 @@ export const Bookings: React.FC = () => {
                         else if (b.status === 'CANCELLED') itemClass += " cancelled";
 
                         return (
-                          <div 
+                          <div
                             key={b.id}
                             onClick={(e) => {
                               e.stopPropagation();
@@ -480,10 +642,10 @@ export const Bookings: React.FC = () => {
         {weekDays.map((day, idx) => {
           const dateBookings = bookings?.filter((b: any) => b.startTime && typeof b.startTime === 'string' && b.startTime.startsWith(day.dateString)) || [];
           const isToday = new Date().toISOString().split('T')[0] === day.dateString;
-          
+
           return (
-            <div 
-              key={idx} 
+            <div
+              key={idx}
               style={{
                 minWidth: '120px',
                 minHeight: '280px',
@@ -510,7 +672,7 @@ export const Bookings: React.FC = () => {
                   </div>
                 ) : (
                   dateBookings.map((b: any) => (
-                    <div 
+                    <div
                       key={b.id}
                       onClick={() => handleBookingClick(b)}
                       style={{
@@ -557,7 +719,7 @@ export const Bookings: React.FC = () => {
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
             {sortedBookings.map((b: any) => (
-              <div 
+              <div
                 key={b.id}
                 onClick={() => handleBookingClick(b)}
                 style={{
@@ -574,7 +736,7 @@ export const Bookings: React.FC = () => {
                 <div style={{ minWidth: '90px', fontSize: '0.85rem', fontWeight: 600, color: 'var(--accent)' }}>
                   {formatTime(b.startTime)} - {formatTime(b.endTime)}
                 </div>
-                
+
                 <div style={{ flexGrow: 1 }}>
                   <h4 style={{ margin: 0, fontSize: '0.95rem', color: '#fff', fontWeight: 600 }}>{b.title}</h4>
                   <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '2px' }}>
@@ -595,11 +757,41 @@ export const Bookings: React.FC = () => {
     );
   };
 
-  const isApprover = hasAuthority('BOOKING:APPROVE');
-
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
       
+      {isApprover && (
+        <div style={{ display: 'flex', gap: '0.5rem', borderBottom: '1px solid var(--border-light)', paddingBottom: '0.5rem', marginBottom: '-0.5rem' }}>
+          <button
+            className={`btn ${activeSubTab === 'scheduler' ? 'btn-primary' : 'btn-ghost'}`}
+            style={{ fontSize: '0.9rem', padding: '0.5rem 1rem' }}
+            onClick={() => setActiveSubTab('scheduler')}
+          >
+            <CalendarIcon size={16} /> Lịch trình & Tra cứu
+          </button>
+          <button
+            className={`btn ${activeSubTab === 'approvals' ? 'btn-primary' : 'btn-ghost'}`}
+            style={{ fontSize: '0.9rem', padding: '0.5rem 1rem', display: 'flex', alignItems: 'center', gap: '6px' }}
+            onClick={() => setActiveSubTab('approvals')}
+          >
+            <UserCheck size={16} /> Phê duyệt yêu cầu
+            {pendingApprovals && pendingApprovals.length > 0 && (
+              <span style={{
+                backgroundColor: 'var(--danger)',
+                color: '#fff',
+                fontSize: '0.7rem',
+                fontWeight: 700,
+                padding: '2px 6px',
+                borderRadius: '10px',
+                lineHeight: 1
+              }}>
+                {pendingApprovals.length}
+              </span>
+            )}
+          </button>
+        </div>
+      )}
+
       {/* Top action row */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem' }}>
         <div>
@@ -611,8 +803,8 @@ export const Bookings: React.FC = () => {
           <button className="btn btn-secondary" onClick={handleExportExcel}>
             <FileSpreadsheet size={16} /> Xuất Excel
           </button>
-          <button 
-            className="btn btn-primary" 
+          <button
+            className="btn btn-primary"
             onClick={() => {
               reset();
               setActiveModal('create');
@@ -623,18 +815,18 @@ export const Bookings: React.FC = () => {
         </div>
       </div>
 
-      {/* Unified Scheduler Container */}
-      <div className="calendar-container">
-        {/* Integrated Top Toolbar */}
+      {activeSubTab === 'scheduler' ? (
+        <div className="calendar-container">
+          {/* Integrated Top Toolbar */}
         <div className="calendar-top-bar">
           {/* Left: View Mode toggles */}
           <div style={{ display: 'flex', background: 'var(--bg-tertiary)', padding: '0.25rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-light)' }}>
-            <button 
+            <button
               type="button"
-              className="btn btn-ghost" 
-              style={{ 
-                padding: '0.4rem 0.75rem', 
-                fontSize: '0.8rem', 
+              className="btn btn-ghost"
+              style={{
+                padding: '0.4rem 0.75rem',
+                fontSize: '0.8rem',
                 borderRadius: 'var(--radius-sm)',
                 backgroundColor: viewMode === 'list' ? 'var(--bg-secondary)' : 'transparent',
                 color: viewMode === 'list' ? 'var(--accent)' : 'var(--text-secondary)',
@@ -644,12 +836,12 @@ export const Bookings: React.FC = () => {
             >
               <List size={16} /> Danh sách
             </button>
-            <button 
+            <button
               type="button"
-              className="btn btn-ghost" 
-              style={{ 
-                padding: '0.4rem 0.75rem', 
-                fontSize: '0.8rem', 
+              className="btn btn-ghost"
+              style={{
+                padding: '0.4rem 0.75rem',
+                fontSize: '0.8rem',
                 borderRadius: 'var(--radius-sm)',
                 backgroundColor: viewMode === 'calendar' ? 'var(--bg-secondary)' : 'transparent',
                 color: viewMode === 'calendar' ? 'var(--accent)' : 'var(--text-secondary)',
@@ -667,9 +859,9 @@ export const Bookings: React.FC = () => {
               <button type="button" className="calendar-control-btn" onClick={() => changeTargetDate(-7)}>
                 <ChevronLeft size={16} />
               </button>
-              <input 
-                type="date" 
-                className="calendar-date-input" 
+              <input
+                type="date"
+                className="calendar-date-input"
                 value={targetDate}
                 onChange={(e) => setTargetDate(e.target.value)}
               />
@@ -678,8 +870,8 @@ export const Bookings: React.FC = () => {
               </button>
 
               {/* Sub-view selection */}
-              <select 
-                className="calendar-date-input" 
+              <select
+                className="calendar-date-input"
                 style={{ appearance: 'none', minWidth: '120px' }}
                 value={calendarViewType}
                 onChange={(e: any) => setCalendarViewType(e.target.value)}
@@ -692,8 +884,8 @@ export const Bookings: React.FC = () => {
           ) : (
             /* Right: Filters (list view only) */
             <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-              <select 
-                className="calendar-date-input" 
+              <select
+                className="calendar-date-input"
                 style={{ appearance: 'none', minWidth: '130px' }}
                 value={filterRoom}
                 onChange={(e) => setFilterRoom(e.target.value)}
@@ -704,8 +896,8 @@ export const Bookings: React.FC = () => {
                 ))}
               </select>
 
-              <select 
-                className="calendar-date-input" 
+              <select
+                className="calendar-date-input"
                 style={{ appearance: 'none', minWidth: '120px' }}
                 value={filterStatus}
                 onChange={(e) => setFilterStatus(e.target.value)}
@@ -717,9 +909,9 @@ export const Bookings: React.FC = () => {
                 <option value="CANCELLED">Đã hủy</option>
               </select>
 
-              <input 
-                type="text" 
-                className="calendar-date-input" 
+              <input
+                type="text"
+                className="calendar-date-input"
                 style={{ maxWidth: '140px' }}
                 placeholder="Người đặt..."
                 value={filterOrganizer}
@@ -743,8 +935,8 @@ export const Bookings: React.FC = () => {
             </div>
           ) : (
             calendarViewType === 'MONTH' ? renderMonthCalendar() :
-            calendarViewType === 'WEEK' ? renderWeekCalendar() :
-            renderDayCalendar()
+              calendarViewType === 'WEEK' ? renderWeekCalendar() :
+                renderDayCalendar()
           )
         ) : bookings?.length === 0 ? (
           <div style={{ padding: '4rem 2rem', textAlign: 'center', color: 'var(--text-tertiary)' }}>
@@ -753,17 +945,16 @@ export const Bookings: React.FC = () => {
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', padding: '1.25rem' }}>
             {bookings?.map((item: any) => (
-              <div 
+              <div
                 key={item.id}
                 onClick={() => handleBookingClick(item)}
                 className="glass-card glass-card-hover"
                 style={{
                   padding: '1.25rem',
-                  borderLeft: `4px solid ${
-                    item.status === 'APPROVED' ? 'var(--success)' : 
-                    item.status === 'REJECTED' ? 'var(--danger)' : 
-                    item.status === 'PENDING' ? 'var(--warning)' : 'var(--text-tertiary)'
-                  }`,
+                  borderLeft: `4px solid ${item.status === 'APPROVED' ? 'var(--success)' :
+                    item.status === 'REJECTED' ? 'var(--danger)' :
+                      item.status === 'PENDING' ? 'var(--warning)' : 'var(--text-tertiary)'
+                    }`,
                   display: 'flex',
                   justifyContent: 'space-between',
                   alignItems: 'center',
@@ -798,8 +989,10 @@ export const Bookings: React.FC = () => {
           </div>
         )}
       </div>
+      ) : (
+        renderApprovalsList()
+      )}
 
-      {/* CREATE BOOKING MODAL */}
       {activeModal === 'create' && (
         <div className="modal-overlay">
           <form onSubmit={handleSubmit(onSubmit)} className="modal-content" style={{ maxWidth: '650px' }}>
@@ -813,10 +1006,10 @@ export const Bookings: React.FC = () => {
             <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
               <div className="form-group">
                 <label className="form-label" htmlFor="book-title">Tiêu đề cuộc họp *</label>
-                <input 
+                <input
                   id="book-title"
-                  className="form-control" 
-                  placeholder="Họp tổng kết tuần / Kick-off dự án..." 
+                  className="form-control"
+                  placeholder="Họp tổng kết tuần / Kick-off dự án..."
                   {...register('title')}
                 />
                 {errors.title && <span className="form-error">{errors.title.message}</span>}
@@ -824,11 +1017,11 @@ export const Bookings: React.FC = () => {
 
               <div className="form-group">
                 <label className="form-label" htmlFor="book-desc">Mô tả nội dung cuộc họp</label>
-                <textarea 
+                <textarea
                   id="book-desc"
-                  className="form-control" 
+                  className="form-control"
                   style={{ minHeight: '50px', resize: 'vertical' }}
-                  placeholder="Thảo luận kế hoạch phát triển quý tiếp theo..." 
+                  placeholder="Thảo luận kế hoạch phát triển quý tiếp theo..."
                   {...register('description')}
                 />
               </div>
@@ -836,9 +1029,9 @@ export const Bookings: React.FC = () => {
               <div className="grid-cols-2" style={{ gap: '1rem' }}>
                 <div className="form-group">
                   <label className="form-label" htmlFor="book-room">Chọn Phòng họp *</label>
-                  <select 
+                  <select
                     id="book-room"
-                    className="form-control" 
+                    className="form-control"
                     {...register('roomId')}
                   >
                     <option value="">-- Chọn phòng trống --</option>
@@ -851,11 +1044,11 @@ export const Bookings: React.FC = () => {
 
                 <div className="form-group">
                   <label className="form-label" htmlFor="book-attendees">Số người tham dự họp *</label>
-                  <input 
+                  <input
                     id="book-attendees"
-                    type="number" 
-                    className="form-control" 
-                    placeholder="8" 
+                    type="number"
+                    className="form-control"
+                    placeholder="8"
                     {...register('attendee')}
                   />
                   {errors.attendee && <span className="form-error">{errors.attendee.message}</span>}
@@ -865,10 +1058,10 @@ export const Bookings: React.FC = () => {
               <div className="grid-cols-2" style={{ gap: '1rem' }}>
                 <div className="form-group">
                   <label className="form-label" htmlFor="book-start">Thời gian bắt đầu *</label>
-                  <input 
+                  <input
                     id="book-start"
-                    type="datetime-local" 
-                    className="form-control" 
+                    type="datetime-local"
+                    className="form-control"
                     {...register('start')}
                   />
                   {errors.start && <span className="form-error">{errors.start.message}</span>}
@@ -876,10 +1069,10 @@ export const Bookings: React.FC = () => {
 
                 <div className="form-group">
                   <label className="form-label" htmlFor="book-end">Thời gian kết thúc *</label>
-                  <input 
+                  <input
                     id="book-end"
-                    type="datetime-local" 
-                    className="form-control" 
+                    type="datetime-local"
+                    className="form-control"
                     {...register('end')}
                   />
                   {errors.end && <span className="form-error">{errors.end.message}</span>}
@@ -893,11 +1086,11 @@ export const Bookings: React.FC = () => {
                   <span style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-tertiary)' }}>
                     <Mail size={16} />
                   </span>
-                  <input 
+                  <input
                     id="book-receivers"
-                    className="form-control" 
+                    className="form-control"
                     style={{ width: '100%', paddingLeft: '2.5rem' }}
-                    placeholder="partner@company.com, ceo@company.com" 
+                    placeholder="partner@company.com, ceo@company.com"
                     {...register('receiversInput')}
                   />
                 </div>
@@ -907,9 +1100,9 @@ export const Bookings: React.FC = () => {
               <div style={{ borderTop: '1px solid var(--border-light)', paddingTop: '1rem' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
                   <span className="form-label">Yêu cầu bổ sung thiết bị họp</span>
-                  <button 
-                    type="button" 
-                    className="btn btn-ghost" 
+                  <button
+                    type="button"
+                    className="btn btn-ghost"
                     style={{ fontSize: '0.75rem', padding: '4px 8px', color: 'var(--accent)' }}
                     onClick={() => append({ equipmentId: 1, quantity: 1 })}
                   >
@@ -920,8 +1113,8 @@ export const Bookings: React.FC = () => {
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', maxHeight: '120px', overflowY: 'auto' }}>
                   {fields.map((field, index) => (
                     <div key={field.id} style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-                      <select 
-                        className="form-control" 
+                      <select
+                        className="form-control"
                         style={{ flexGrow: 1 }}
                         {...register(`equipments.${index}.equipmentId` as const)}
                       >
@@ -929,18 +1122,18 @@ export const Bookings: React.FC = () => {
                           <option key={eq.id} value={eq.id}>{eq.equipmentName}</option>
                         ))}
                       </select>
-                      
-                      <input 
-                        type="number" 
-                        className="form-control" 
-                        style={{ width: '80px' }} 
+
+                      <input
+                        type="number"
+                        className="form-control"
+                        style={{ width: '80px' }}
                         placeholder="SL"
                         {...register(`equipments.${index}.quantity` as const)}
                       />
 
-                      <button 
-                        type="button" 
-                        className="btn btn-ghost" 
+                      <button
+                        type="button"
+                        className="btn btn-ghost"
                         style={{ color: 'var(--danger)', padding: '6px', minWidth: 'auto' }}
                         onClick={() => remove(index)}
                       >
@@ -974,7 +1167,7 @@ export const Bookings: React.FC = () => {
             </div>
 
             <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-              
+
               {/* Title & Badge */}
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                 <div>
@@ -1018,7 +1211,7 @@ export const Bookings: React.FC = () => {
                   <h4 style={{ fontSize: '0.9rem', fontWeight: 700, color: 'var(--text-primary)', marginBottom: '0.5rem' }}>Thiết bị họp bổ sung</h4>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
                     {selectedBooking.equipments.map((eq: any, index: number) => (
-                      <div 
+                      <div
                         key={index}
                         style={{
                           display: 'flex',
@@ -1042,7 +1235,7 @@ export const Bookings: React.FC = () => {
               {selectedBooking.status === 'PENDING' && (
                 <div style={{ borderTop: '1px solid var(--border-light)', paddingTop: '1rem' }}>
                   <label className="form-label" htmlFor="detail-notes">Ý kiến đóng góp / Lý do từ chối (bắt buộc khi từ chối)</label>
-                  <textarea 
+                  <textarea
                     id="detail-notes"
                     className="form-control"
                     placeholder="Nhập ghi chú ý kiến tại đây..."
@@ -1059,9 +1252,9 @@ export const Bookings: React.FC = () => {
 
               {/* Confirm attendance button */}
               {selectedBooking.status === 'APPROVED' && (
-                <button 
-                  type="button" 
-                  className="btn" 
+                <button
+                  type="button"
+                  className="btn"
                   style={{ backgroundColor: 'var(--info)', color: '#fff' }}
                   onClick={() => confirmAttendanceMutation.mutate(selectedBooking.id)}
                 >
@@ -1072,8 +1265,8 @@ export const Bookings: React.FC = () => {
               {/* Actions for Approvers */}
               {isApprover && selectedBooking.status === 'PENDING' && (
                 <>
-                  <button 
-                    type="button" 
+                  <button
+                    type="button"
                     className="btn btn-danger"
                     onClick={() => {
                       if (!notes) {
@@ -1085,8 +1278,8 @@ export const Bookings: React.FC = () => {
                   >
                     Từ chối
                   </button>
-                  <button 
-                    type="button" 
+                  <button
+                    type="button"
                     className="btn"
                     style={{ backgroundColor: 'var(--success)', color: '#fff' }}
                     onClick={() => approveMutation.mutate({ id: selectedBooking.id, note: notes })}
@@ -1098,14 +1291,197 @@ export const Bookings: React.FC = () => {
 
               {/* Actions for Booking owner */}
               {selectedBooking.status === 'PENDING' && !isApprover && (
-                <button 
-                  type="button" 
+                <button
+                  type="button"
                   className="btn btn-danger"
                   onClick={() => cancelBookingMutation.mutate({ id: selectedBooking.id, reason: 'Người dùng hủy đặt' })}
                 >
                   Hủy lịch đặt
                 </button>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* APPROVAL DETAIL & COMPARISON MODAL */}
+      {activeModal === 'approval-detail' && selectedHistory && (
+        <div className="modal-overlay">
+          <div className="modal-content" style={{ maxWidth: '650px' }}>
+            <div className="modal-header">
+              <h3 style={{ margin: 0, fontSize: '1.15rem' }}>
+                Chi tiết yêu cầu phê duyệt
+              </h3>
+              <button type="button" className="btn btn-ghost" style={{ padding: '4px', minWidth: 'auto' }} onClick={() => setActiveModal(null)}>
+                <XCircle size={20} />
+              </button>
+            </div>
+
+            <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+              
+              {/* Basic Request Info */}
+              <div className="glass-card" style={{ padding: '1rem', backgroundColor: 'rgba(255,255,255,0.01)' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '0.5rem' }}>
+                  <div>
+                    <h4 style={{ margin: 0, fontSize: '1rem', color: '#fff', fontWeight: 600 }}>{selectedHistory.title}</h4>
+                    <p style={{ margin: '4px 0 0 0', fontSize: '0.8rem', color: 'var(--text-tertiary)' }}>
+                      Người yêu cầu: <strong>{selectedHistory.userBooked}</strong> ({selectedHistory.email} | {selectedHistory.phone})
+                    </p>
+                  </div>
+                  <span className={`badge badge-pending`} style={{ fontSize: '0.7rem', padding: '4px 8px' }}>
+                    {selectedHistory.actionType === 'CREATED' ? 'Đăng ký mới' : selectedHistory.actionType === 'UPDATED' ? 'Thay đổi thông tin' : 'Cập nhật thiết bị'}
+                  </span>
+                </div>
+              </div>
+
+              {/* Old vs New Comparison Table */}
+              <div>
+                <h4 style={{ fontSize: '0.9rem', fontWeight: 700, color: 'var(--text-primary)', marginBottom: '0.5rem' }}>
+                  So sánh thay đổi
+                </h4>
+
+                <div style={{ border: '1px solid var(--border-light)', borderRadius: 'var(--radius-md)', overflow: 'hidden' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
+                    <thead>
+                      <tr style={{ backgroundColor: 'var(--bg-tertiary)', borderBottom: '1px solid var(--border-light)' }}>
+                        <th style={{ padding: '0.75rem 0.5rem', fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-secondary)' }}>Thông tin</th>
+                        {selectedHistory.actionType === 'CREATED' ? (
+                          <th style={{ padding: '0.75rem 0.5rem', fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-secondary)' }}>Giá trị đăng ký</th>
+                        ) : (
+                          <>
+                            <th style={{ padding: '0.75rem 0.5rem', fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-secondary)' }}>Giá trị cũ</th>
+                            <th style={{ padding: '0.75rem 0.5rem', fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-secondary)' }}>Giá trị mới</th>
+                          </>
+                        )}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {selectedHistory.actionType === 'CREATED' ? (
+                        <>
+                          <tr style={{ borderBottom: '1px solid var(--border-light)' }}>
+                            <td style={{ padding: '0.75rem 0.5rem', fontWeight: 600, color: 'var(--text-secondary)', fontSize: '0.85rem' }}>Tiêu đề</td>
+                            <td style={{ padding: '0.75rem 0.5rem', color: 'var(--text-primary)', fontSize: '0.85rem' }}>{selectedHistory.newData?.title || selectedHistory.title}</td>
+                          </tr>
+                          <tr style={{ borderBottom: '1px solid var(--border-light)' }}>
+                            <td style={{ padding: '0.75rem 0.5rem', fontWeight: 600, color: 'var(--text-secondary)', fontSize: '0.85rem' }}>Mô tả</td>
+                            <td style={{ padding: '0.75rem 0.5rem', color: 'var(--text-primary)', fontSize: '0.85rem' }}>{selectedHistory.newData?.description || selectedHistory.description || '(trống)'}</td>
+                          </tr>
+                          <tr style={{ borderBottom: '1px solid var(--border-light)' }}>
+                            <td style={{ padding: '0.75rem 0.5rem', fontWeight: 600, color: 'var(--text-secondary)', fontSize: '0.85rem' }}>Phòng họp</td>
+                            <td style={{ padding: '0.75rem 0.5rem', color: 'var(--text-primary)', fontSize: '0.85rem' }}>{getRoomNameById(selectedHistory.newData?.roomId) || selectedHistory.roomName}</td>
+                          </tr>
+                          <tr style={{ borderBottom: '1px solid var(--border-light)' }}>
+                            <td style={{ padding: '0.75rem 0.5rem', fontWeight: 600, color: 'var(--text-secondary)', fontSize: '0.85rem' }}>Giờ bắt đầu</td>
+                            <td style={{ padding: '0.75rem 0.5rem', color: 'var(--text-primary)', fontSize: '0.85rem' }}>{formatFullDate(selectedHistory.newData?.startTime || selectedHistory.startTime)}</td>
+                          </tr>
+                          <tr style={{ borderBottom: '1px solid var(--border-light)' }}>
+                            <td style={{ padding: '0.75rem 0.5rem', fontWeight: 600, color: 'var(--text-secondary)', fontSize: '0.85rem' }}>Giờ kết thúc</td>
+                            <td style={{ padding: '0.75rem 0.5rem', color: 'var(--text-primary)', fontSize: '0.85rem' }}>{formatFullDate(selectedHistory.newData?.endTime || selectedHistory.endTime)}</td>
+                          </tr>
+                          <tr style={{ borderBottom: '1px solid var(--border-light)' }}>
+                            <td style={{ padding: '0.75rem 0.5rem', fontWeight: 600, color: 'var(--text-secondary)', fontSize: '0.85rem' }}>Số người tham gia</td>
+                            <td style={{ padding: '0.75rem 0.5rem', color: 'var(--text-primary)', fontSize: '0.85rem' }}>{selectedHistory.newData?.attendeeCount || selectedHistory.attendee} người</td>
+                          </tr>
+                        </>
+                      ) : selectedHistory.actionType === 'UPDATED' ? (
+                        <>
+                          {renderDiffRow('Tiêu đề', selectedHistory.oldData?.title, selectedHistory.newData?.title)}
+                          {renderDiffRow('Mô tả', selectedHistory.oldData?.description, selectedHistory.newData?.description)}
+                          {renderDiffRow('Phòng họp', selectedHistory.oldData?.roomId, selectedHistory.newData?.roomId, getRoomNameById)}
+                          {renderDiffRow('Giờ bắt đầu', selectedHistory.oldData?.startTime, selectedHistory.newData?.startTime, formatFullDate)}
+                          {renderDiffRow('Giờ kết thúc', selectedHistory.oldData?.endTime, selectedHistory.newData?.endTime, formatFullDate)}
+                          {renderDiffRow('Số người tham gia', selectedHistory.oldData?.attendeeCount, selectedHistory.newData?.attendeeCount, (val) => val ? `${val} người` : '')}
+                        </>
+                      ) : (
+                        /* Equipment action types */
+                        (() => {
+                          const oldEquips = selectedHistory.oldData?.equipments || [];
+                          const newEquips = selectedHistory.newData?.equipments || [];
+                          const allEquipIds = Array.from(new Set([
+                            ...oldEquips.map((e: any) => e.equipmentId),
+                            ...newEquips.map((e: any) => e.equipmentId)
+                          ])).filter(Boolean);
+
+                          if (allEquipIds.length === 0) {
+                            return (
+                              <tr>
+                                <td colSpan={3} style={{ padding: '1rem', textAlign: 'center', color: 'var(--text-tertiary)', fontStyle: 'italic' }}>
+                                  Không có thay đổi về thiết bị.
+                                </td>
+                              </tr>
+                            );
+                          }
+
+                          return allEquipIds.map((eqId: any) => {
+                            const oldEq = oldEquips.find((e: any) => e.equipmentId === eqId);
+                            const newEq = newEquips.find((e: any) => e.equipmentId === eqId);
+                            const eqName = newEq?.equipmentName || oldEq?.equipmentName || `Thiết bị #${eqId}`;
+                            const oldQty = oldEq?.usingQuantity || 0;
+                            const newQty = newEq?.usingQuantity || 0;
+
+                            return renderDiffRow(eqName, oldQty, newQty, (val) => val ? `x${val}` : 'Không sử dụng');
+                          });
+                        })()
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {/* Review notes */}
+              <div className="form-group" style={{ marginTop: '0.5rem' }}>
+                <label className="form-label" htmlFor="review-notes">Ý kiến đóng góp / Lý do từ chối (bắt buộc khi từ chối)</label>
+                <textarea
+                  id="review-notes"
+                  className="form-control"
+                  style={{ minHeight: '60px', resize: 'vertical' }}
+                  placeholder="Ghi chú phản hồi duyệt hoặc lý do từ chối yêu cầu họp..."
+                  value={notes}
+                  onChange={(e) => setNotes(e.target.value)}
+                />
+              </div>
+
+            </div>
+
+            <div className="modal-footer" style={{ justifyContent: 'flex-end', gap: '0.5rem' }}>
+              <button type="button" className="btn btn-secondary" onClick={() => setActiveModal(null)}>Đóng</button>
+              
+              <button
+                type="button"
+                className="btn btn-danger"
+                disabled={rejectMutation.isPending || approveMutation.isPending}
+                onClick={() => {
+                  if (!notes.trim()) {
+                    showToast('Vui lòng nhập lý do từ chối vào ô ý kiến đóng góp', 'error');
+                    return;
+                  }
+                  rejectMutation.mutate({
+                    id: selectedHistory.bookingId,
+                    actionType: selectedHistory.actionType,
+                    reason: notes,
+                    oldPayload: selectedHistory.oldData,
+                    newPayload: selectedHistory.newData
+                  });
+                }}
+              >
+                Từ chối
+              </button>
+
+              <button
+                type="button"
+                className="btn"
+                style={{ backgroundColor: 'var(--success)', color: '#fff' }}
+                disabled={rejectMutation.isPending || approveMutation.isPending}
+                onClick={() => {
+                  approveMutation.mutate({
+                    id: selectedHistory.bookingId,
+                    actionType: selectedHistory.actionType,
+                    newData: selectedHistory.newData
+                  });
+                }}
+              >
+                Phê duyệt
+              </button>
             </div>
           </div>
         </div>

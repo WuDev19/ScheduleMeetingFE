@@ -178,15 +178,12 @@ export const Users: React.FC = () => {
   const updateMutation = useMutation({
     mutationFn: async (data: UpdateUserFormValues) => {
       if (!selectedUser?.id) return;
-      const formData = new FormData();
-      formData.append('fullName', data.fullName);
-      formData.append('phone', data.phone);
-      formData.append('departmentId', String(data.departmentId));
-      if (data.newPassword) {
-        formData.append('newPassword', data.newPassword);
-      }
-      await apiClient.patch(`/user/${selectedUser.id}`, formData, {
-        headers: { 'Content-Type': 'multipart/form-data' }
+      // ✅ Backend đã sửa thành @RequestBody nên gửi JSON object
+      await apiClient.patch(`/user/${selectedUser.id}`, {
+        fullName: data.fullName,
+        phone: data.phone,
+        departmentId: data.departmentId,
+        ...(data.newPassword && { newPassword: data.newPassword })
       });
     },
     onSuccess: () => {
