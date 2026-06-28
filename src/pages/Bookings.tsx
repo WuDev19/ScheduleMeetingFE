@@ -81,6 +81,13 @@ export const Bookings: React.FC = () => {
   const [filterRoom, setFilterRoom] = useState('');
   const [filterStatus, setFilterStatus] = useState('');
   const [filterOrganizer, setFilterOrganizer] = useState('');
+  const [filterMyBookings, setFilterMyBookings] = useState(false);
+  const [listPage, setListPage] = useState(0);
+
+  // Reset page when filters change
+  useEffect(() => {
+    setListPage(0);
+  }, [filterRoom, filterStatus, filterOrganizer, filterMyBookings, viewMode]);
 
   // Sub-tabs for Approver
   const isApprover = hasAuthority('BOOKING:APPROVE');
@@ -122,24 +129,46 @@ export const Bookings: React.FC = () => {
 
   // 3. Fetch Bookings list
   const { data: bookings, isLoading: isBookingsLoading } = useQuery({
-    queryKey: ['bookings', 'list', viewMode, calendarViewType, targetDate, filterRoom, filterStatus, filterOrganizer],
+    queryKey: ['bookings', 'list', viewMode, calendarViewType, targetDate, filterRoom, filterStatus, filterOrganizer, filterMyBookings, listPage],
     queryFn: async () => {
       if (viewMode === 'calendar') {
-        const response = await apiClient.get(`/booking/view?viewType=${calendarViewType}&targetDate=${targetDate}`);
-        return response.data?.data || [];
+        let url = `/booking/view?viewType=${calendarViewType}&targetDate=${targetDate}`;
+        if (filterMyBookings && user?.username) url += `&bookedBy=${encodeURIComponent(user.username)}`;
+        const response = await apiClient.get(url);
+        let result = response.data?.data || [];
+        // Fallback client-side filter in case backend doesn't support bookedBy param
+        if (filterMyBookings && user?.id) {
+          const filtered = result.filter((b: any) =>
+            b.userId === user.id ||
+            b.bookedById === user.id ||
+            b.userBooked === user.username ||
+            b.userBooked === user.email ||
+            b.bookedBy === user.username ||
+            b.createdBy === user.username
+          );
+          // Only apply client filter if backend didn't already filter (i.e. result unchanged)
+          if (filtered.length < result.length) result = filtered;
+        }
+        return result;
       } else {
-        let url = `/booking/filter?`;
+        let url = `/booking/filter?page=${listPage}&size=5`;
         if (filterRoom) url += `&roomId=${filterRoom}`;
         if (filterStatus) url += `&status=${filterStatus}`;
         if (filterOrganizer) url += `&bookedBy=${encodeURIComponent(filterOrganizer)}`;
+        if (filterMyBookings && user?.username) url += `&bookedBy=${encodeURIComponent(user.username)}`;
         const response = await apiClient.get(url);
-        return response.data?.data || [];
+        const pageData = response.data?.data;
+        return {
+          content: pageData?.content || (Array.isArray(pageData) ? pageData : []),
+          totalPages: pageData?.totalPages ?? 1,
+          totalElements: pageData?.totalElements ?? 0,
+        };
       }
     }
   });
 
   // 4. Fetch Booking Detail if query param is set
-  const { data: bookingDetail } = useQuery({
+  const { data: bookingDetail, isError: isBookingDetailError } = useQuery({
     queryKey: ['bookings', 'detail', bookingIdQuery],
     queryFn: async () => {
       if (!bookingIdQuery) return null;
@@ -147,6 +176,7 @@ export const Bookings: React.FC = () => {
       return response.data?.data;
     },
     enabled: !!bookingIdQuery,
+    retry: false,
   });
 
   useEffect(() => {
@@ -155,6 +185,13 @@ export const Bookings: React.FC = () => {
       setActiveModal('detail');
     }
   }, [bookingDetail]);
+
+  useEffect(() => {
+    if (isBookingDetailError && bookingIdQuery) {
+      showToast('Bạn không có quyền xem lịch họp này hoặc lịch họp không tồn tại.', 'error');
+      setSearchParams({});
+    }
+  }, [isBookingDetailError]);
 
   // Form Hooks
   const {
@@ -281,8 +318,9 @@ export const Bookings: React.FC = () => {
   // EXPORT EXCEL MUTATION
   const handleExportExcel = async () => {
     try {
-      // Export filters request
-      const response = await apiClient.get('/booking/export', {
+      const isPrivileged = isApprover || hasAuthority('ADMIN') || user?.roles?.some((r: any) => r.roleName === 'ADMIN' || r.roleName === 'APPROVER');
+      const exportType = isPrivileged ? 'APPROVER' : 'REGISTER';
+      const response = await apiClient.get(`/booking/export?exportType=${exportType}`, {
         responseType: 'blob'
       });
       // Download blob
@@ -311,10 +349,28 @@ export const Bookings: React.FC = () => {
     setSearchParams({});
   };
 
-  const changeTargetDate = (offsetDays: number) => {
+  const changeTargetDate = (direction: 1 | -1) => {
     const current = new Date(targetDate);
-    current.setDate(current.getDate() + offsetDays);
+    if (calendarViewType === 'DAY') {
+      current.setDate(current.getDate() + direction);
+    } else if (calendarViewType === 'WEEK') {
+      current.setDate(current.getDate() + direction * 7);
+    } else {
+      // MONTH: shift by 1 month
+      current.setMonth(current.getMonth() + direction);
+    }
     setTargetDate(current.toISOString().split('T')[0]);
+  };
+
+  const getStatusLabel = (status: string) => {
+    switch (status) {
+      case 'APPROVED': return 'Đã duyệt';
+      case 'PENDING': return 'Chờ duyệt';
+      case 'REJECTED': return 'Từ chối';
+      case 'CANCELLED': return 'Đã hủy';
+      case 'CANCEL_PENDING': return 'Chờ hủy';
+      default: return status || 'Chờ duyệt';
+    }
   };
 
   const formatTime = (timeStr: string) => {
@@ -578,6 +634,85 @@ export const Bookings: React.FC = () => {
     );
   };
 
+  // Shared booking card renderer used consistently across all 3 calendar views
+  const getStatusColor = (status: string) => {
+    if (status === 'APPROVED') return 'var(--success)';
+    if (status === 'PENDING') return 'var(--warning)';
+    if (status === 'REJECTED') return 'var(--danger)';
+    if (status === 'CANCELLED') return 'var(--text-tertiary)';
+    return 'var(--warning)';
+  };
+
+  const getStatusBg = (status: string) => {
+    if (status === 'APPROVED') return 'rgba(16, 185, 129, 0.12)';
+    if (status === 'PENDING') return 'rgba(245, 158, 11, 0.12)';
+    if (status === 'REJECTED') return 'rgba(239, 68, 68, 0.12)';
+    if (status === 'CANCELLED') return 'rgba(100, 116, 139, 0.12)';
+    return 'rgba(245, 158, 11, 0.12)';
+  };
+
+  const renderBookingCard = (b: any, compact = false) => (
+    <div
+      key={b.id}
+      onClick={(e) => { e.stopPropagation(); handleBookingClick(b); }}
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        gap: compact ? '2px' : '4px',
+        padding: compact ? '5px 7px' : '7px 10px',
+        borderRadius: '6px',
+        backgroundColor: getStatusBg(b.status),
+        borderLeft: `3px solid ${getStatusColor(b.status)}`,
+        cursor: 'pointer',
+        transition: 'opacity 0.15s ease',
+        overflow: 'hidden',
+      }}
+      onMouseEnter={e => (e.currentTarget.style.opacity = '0.8')}
+      onMouseLeave={e => (e.currentTarget.style.opacity = '1')}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', gap: '4px', justifyContent: 'space-between' }}>
+        <span style={{ fontSize: compact ? '0.65rem' : '0.7rem', fontWeight: 700, color: getStatusColor(b.status) }}>
+          {formatTime(b.startTime)}{!compact && ` – ${formatTime(b.endTime)}`}
+        </span>
+        <span style={{
+          fontSize: '0.6rem', fontWeight: 600, padding: '1px 5px', borderRadius: '3px',
+          backgroundColor: getStatusColor(b.status), color: '#fff', whiteSpace: 'nowrap', flexShrink: 0
+        }}>
+          {getStatusLabel(b.status)}
+        </span>
+      </div>
+      <div style={{ fontSize: compact ? '0.7rem' : '0.75rem', fontWeight: 600, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        {b.title}
+      </div>
+      {!compact && (
+        <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          📍 {b.roomName}
+        </div>
+      )}
+    </div>
+  );
+
+  const renderCalendarLegend = () => (
+    <div className="calendar-legend">
+      <div className="calendar-legend-item">
+        <span className="calendar-legend-dot" style={{ backgroundColor: 'var(--success)' }}></span>
+        <span>Đã duyệt</span>
+      </div>
+      <div className="calendar-legend-item">
+        <span className="calendar-legend-dot" style={{ backgroundColor: 'var(--warning)' }}></span>
+        <span>Chờ duyệt</span>
+      </div>
+      <div className="calendar-legend-item">
+        <span className="calendar-legend-dot" style={{ backgroundColor: 'var(--danger)' }}></span>
+        <span>Từ chối</span>
+      </div>
+      <div className="calendar-legend-item">
+        <span className="calendar-legend-dot" style={{ backgroundColor: 'var(--text-tertiary)' }}></span>
+        <span>Đã hủy</span>
+      </div>
+    </div>
+  );
+
   const renderMonthCalendar = () => {
     const current = new Date(targetDate);
     const year = current.getFullYear();
@@ -585,134 +720,117 @@ export const Bookings: React.FC = () => {
 
     const daysInMonth = new Date(year, month + 1, 0).getDate();
     const firstDayIndex = new Date(year, month, 1).getDay();
+    // Monday-first: Sunday(0) → offset 6, else dayOfWeek - 1
     const startOffset = firstDayIndex === 0 ? 6 : firstDayIndex - 1;
 
-    const calendarCells = [];
+    const calendarCells: { date: Date; dayNumber: number; isCurrentMonth: boolean; dateString: string }[] = [];
 
     const prevMonthDays = new Date(year, month, 0).getDate();
     for (let i = startOffset - 1; i >= 0; i--) {
       const dayNum = prevMonthDays - i;
       const prevDate = new Date(year, month - 1, dayNum);
-      calendarCells.push({
-        date: prevDate,
-        dayNumber: dayNum,
-        isCurrentMonth: false,
-        dateString: prevDate.toISOString().split('T')[0]
-      });
+      calendarCells.push({ date: prevDate, dayNumber: dayNum, isCurrentMonth: false, dateString: prevDate.toISOString().split('T')[0] });
     }
 
     for (let i = 1; i <= daysInMonth; i++) {
       const currDate = new Date(year, month, i);
-      calendarCells.push({
-        date: currDate,
-        dayNumber: i,
-        isCurrentMonth: true,
-        dateString: currDate.toISOString().split('T')[0]
-      });
+      calendarCells.push({ date: currDate, dayNumber: i, isCurrentMonth: true, dateString: currDate.toISOString().split('T')[0] });
     }
 
     const remaining = 42 - calendarCells.length;
     for (let i = 1; i <= remaining; i++) {
       const nextDate = new Date(year, month + 1, i);
-      calendarCells.push({
-        date: nextDate,
-        dayNumber: i,
-        isCurrentMonth: false,
-        dateString: nextDate.toISOString().split('T')[0]
-      });
+      calendarCells.push({ date: nextDate, dayNumber: i, isCurrentMonth: false, dateString: nextDate.toISOString().split('T')[0] });
     }
 
     const weekdays = ['T2', 'T3', 'T4', 'T5', 'T6', 'T7', 'CN'];
+    const todayStr = new Date().toISOString().split('T')[0];
+
+    // Pre-build a date→bookings map for all bookings in this month view
+    const bookingsByDate: Record<string, any[]> = {};
+    (bookings || []).forEach((b: any) => {
+      if (!b.startTime) return;
+      // Support both "2026-06-28T..." and "2026-06-28 ..." formats
+      const ds = typeof b.startTime === 'string' ? b.startTime.substring(0, 10) : '';
+      if (!ds) return;
+      if (!bookingsByDate[ds]) bookingsByDate[ds] = [];
+      bookingsByDate[ds].push(b);
+    });
 
     return (
       <>
-        {/* Weekday headers */}
         <div className="calendar-header-row">
           {weekdays.map((d) => (
             <div key={d} className="calendar-header-cell">{d}</div>
           ))}
         </div>
 
-        {/* Days grid */}
         <div className="calendar-grid">
           {calendarCells.map((cell, idx) => {
-            const dateBookings = bookings?.filter((b: any) => b.startTime && typeof b.startTime === 'string' && b.startTime.startsWith(cell.dateString)) || [];
-            const isToday = new Date().toISOString().split('T')[0] === cell.dateString;
-
+            const dateBookings = bookingsByDate[cell.dateString] || [];
+            const isToday = todayStr === cell.dateString;
             let cellClasses = "calendar-day-cell";
             if (!cell.isCurrentMonth) cellClasses += " inactive";
             if (isToday) cellClasses += " today";
 
             return (
               <div key={idx} className={cellClasses}>
-                <div className="calendar-day-number">
-                  {cell.dayNumber}
-                </div>
+                <div className="calendar-day-number">{cell.dayNumber}</div>
 
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', flexGrow: 1, overflow: 'hidden' }}>
-                  {dateBookings.slice(0, 2).map((b: any) => {
-                    let badgeClass = "calendar-event-badge";
-                    if (b.status === 'APPROVED') badgeClass += " approved";
-                    else if (b.status === 'PENDING') badgeClass += " pending";
-                    else if (b.status === 'REJECTED') badgeClass += " rejected";
-                    else if (b.status === 'CANCELLED') badgeClass += " cancelled";
-                    else badgeClass += " pending";
-
-                    return (
-                      <div
-                        key={b.id}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleBookingClick(b);
-                        }}
-                        className={badgeClass}
-                      >
-                        <span style={{ fontWeight: 600, opacity: 0.85 }}>{formatTime(b.startTime)}</span>
-                        <span>{b.title}</span>
-                      </div>
-                    );
-                  })}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', flexGrow: 1, overflow: 'hidden' }}>
+                  {dateBookings.slice(0, 2).map((b: any) => renderBookingCard(b, true))}
                   {dateBookings.length > 2 && (
-                    <div className="calendar-more-indicator">
-                      + {dateBookings.length - 2} lịch họp
-                    </div>
+                    <div className="calendar-more-indicator">+ {dateBookings.length - 2} lịch họp</div>
                   )}
                 </div>
 
-                {/* Hover Popover containing full detail list of bookings of this day */}
                 {dateBookings.length > 0 && (
-                  <div className="calendar-day-popover" style={{ left: '100%', zIndex: 10, minWidth: '260px' }}>
+                  <div className="calendar-day-popover" style={{
+                    zIndex: 100, minWidth: '300px', maxWidth: '340px',
+                    // Smart position: cells in last 3 columns show popover to the left
+                    ...(idx % 7 >= 4 ? { right: '0', left: 'auto' } : { left: '100%', right: 'auto' }),
+                    // Cells in last 2 rows show popover upward
+                    ...(idx >= 28 ? { bottom: '0', top: 'auto' } : { top: '0', bottom: 'auto' }),
+                  }}>
                     <div className="calendar-day-popover-header">
-                      Ngày {cell.dayNumber} - {dateBookings.length} lịch họp
+                      Ngày {cell.dayNumber}/{current.getMonth() + 1} — {dateBookings.length} lịch họp
                     </div>
-                    <div className="calendar-day-popover-body">
-                      {dateBookings.map((b: any) => {
-                        let itemClass = "calendar-popover-item";
-                        if (b.status === 'APPROVED') itemClass += " approved";
-                        else if (b.status === 'PENDING') itemClass += " pending";
-                        else if (b.status === 'REJECTED') itemClass += " rejected";
-                        else if (b.status === 'CANCELLED') itemClass += " cancelled";
-
-                        return (
-                          <div
-                            key={b.id}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleBookingClick(b);
-                            }}
-                            className={itemClass}
-                          >
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
-                              <span className="calendar-popover-time">{formatTime(b.startTime)} - {formatTime(b.endTime)}</span>
-                              <span className={`badge badge-${b.status?.toLowerCase() || 'pending'}`} style={{ fontSize: '0.62rem', padding: '2px 6px' }}>
-                                {b.status === 'APPROVED' ? 'Đã duyệt' : b.status === 'PENDING' ? 'Chờ duyệt' : b.status === 'REJECTED' ? 'Từ chối' : 'Hủy'}
-                              </span>
-                            </div>
-                            <div className="calendar-popover-title">{b.title}</div>
-                            <div className="calendar-popover-meta">📍 {b.roomName} (Tầng {b.floorNumber})</div>
+                    <div className="calendar-day-popover-body" style={{
+                      display: 'flex', flexDirection: 'column', gap: '6px',
+                      maxHeight: '280px', overflowY: 'auto',
+                      paddingRight: '2px',
+                    }}>
+                      {dateBookings.map((b: any) => (
+                        <div
+                          key={b.id}
+                          onClick={(e) => { e.stopPropagation(); handleBookingClick(b); }}
+                          style={{
+                            display: 'flex', flexDirection: 'column', gap: '4px',
+                            padding: '8px 10px',
+                            borderRadius: '6px',
+                            backgroundColor: getStatusBg(b.status),
+                            borderLeft: `3px solid ${getStatusColor(b.status)}`,
+                            cursor: 'pointer',
+                          }}
+                        >
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '6px' }}>
+                            <span style={{ fontSize: '0.75rem', fontWeight: 700, color: getStatusColor(b.status) }}>
+                              {formatTime(b.startTime)} – {formatTime(b.endTime)}
+                            </span>
+                            <span style={{
+                              fontSize: '0.62rem', fontWeight: 600, padding: '2px 7px', borderRadius: '4px',
+                              backgroundColor: getStatusColor(b.status), color: '#fff', whiteSpace: 'nowrap', flexShrink: 0,
+                            }}>
+                              {getStatusLabel(b.status)}
+                            </span>
                           </div>
-                        );
-                      })}
+                          <div style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--text-primary)' }}>{b.title}</div>
+                          <div style={{ fontSize: '0.68rem', color: 'var(--text-secondary)' }}>📍 {b.roomName}{b.floorNumber ? ` (Tầng ${b.floorNumber})` : ''}</div>
+                          {b.attendee && (
+                            <div style={{ fontSize: '0.68rem', color: 'var(--text-tertiary)' }}>👥 {b.attendee} người tham gia</div>
+                          )}
+                        </div>
+                      ))}
                     </div>
                   </div>
                 )}
@@ -721,25 +839,7 @@ export const Bookings: React.FC = () => {
           })}
         </div>
 
-        {/* Calendar Legend */}
-        <div className="calendar-legend">
-          <div className="calendar-legend-item">
-            <span className="calendar-legend-dot" style={{ backgroundColor: 'var(--success)' }}></span>
-            <span>Đã duyệt</span>
-          </div>
-          <div className="calendar-legend-item">
-            <span className="calendar-legend-dot" style={{ backgroundColor: 'var(--warning)' }}></span>
-            <span>Chờ duyệt</span>
-          </div>
-          <div className="calendar-legend-item">
-            <span className="calendar-legend-dot" style={{ backgroundColor: 'var(--danger)' }}></span>
-            <span>Từ chối</span>
-          </div>
-          <div className="calendar-legend-item">
-            <span className="calendar-legend-dot" style={{ backgroundColor: 'var(--text-tertiary)' }}></span>
-            <span>Đã hủy</span>
-          </div>
-        </div>
+        {renderCalendarLegend()}
       </>
     );
   };
@@ -752,133 +852,273 @@ export const Bookings: React.FC = () => {
     const monday = new Date(current);
     monday.setDate(current.getDate() - startOffset);
 
-    const weekDays = [];
+    const weekDays: { date: Date; dateString: string; label: string; dayNum: number }[] = [];
     for (let i = 0; i < 7; i++) {
       const day = new Date(monday);
       day.setDate(monday.getDate() + i);
       weekDays.push({
         date: day,
         dateString: day.toISOString().split('T')[0],
-        label: ['T2', 'T3', 'T4', 'T5', 'T6', 'T7', 'CN'][i]
+        label: ['T2', 'T3', 'T4', 'T5', 'T6', 'T7', 'CN'][i],
+        dayNum: day.getDate(),
       });
     }
 
-    return (
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '10px', overflowX: 'auto', padding: '1.25rem' }}>
-        {weekDays.map((day, idx) => {
-          const dateBookings = bookings?.filter((b: any) => b.startTime && typeof b.startTime === 'string' && b.startTime.startsWith(day.dateString)) || [];
-          const isToday = new Date().toISOString().split('T')[0] === day.dateString;
+    // Pre-build booking map for the week
+    const bookingsByDate: Record<string, any[]> = {};
+    (bookings || []).forEach((b: any) => {
+      if (!b.startTime) return;
+      const ds = typeof b.startTime === 'string' ? b.startTime.substring(0, 10) : '';
+      if (!ds) return;
+      if (!bookingsByDate[ds]) bookingsByDate[ds] = [];
+      bookingsByDate[ds].push(b);
+    });
 
-          return (
-            <div
-              key={idx}
-              style={{
-                minWidth: '120px',
-                minHeight: '280px',
-                backgroundColor: 'rgba(30, 41, 59, 0.4)',
-                border: isToday ? '1px solid var(--accent)' : '1px solid rgba(255, 255, 255, 0.05)',
-                borderRadius: 'var(--radius-md)',
-                display: 'flex',
-                flexDirection: 'column',
-                gap: '8px',
-                padding: '0.75rem'
-              }}
-            >
-              <div style={{ textAlign: 'center', borderBottom: '1px solid rgba(255, 255, 255, 0.05)', paddingBottom: '0.5rem' }}>
-                <span style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-secondary)' }}>{day.label}</span>
-                <div style={{ fontSize: '1.1rem', fontWeight: 700, color: isToday ? 'var(--accent)' : '#fff', marginTop: '0.15rem' }}>
-                  {day.date.getDate()}
+    const todayStr = new Date().toISOString().split('T')[0];
+    const sunday = weekDays[6].date;
+
+    // Week range label: "23/06 – 29/06/2026"
+    const fmtDay = (d: Date) => `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}`;
+    const weekRangeLabel = `${fmtDay(monday)} – ${fmtDay(sunday)}/${sunday.getFullYear()}`;
+
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
+        {/* Week range sub-header */}
+        <div style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.75rem',
+          padding: '0.65rem 1.25rem', borderBottom: '1px solid rgba(0,0,0,0.08)',
+          backgroundColor: 'rgba(248,249,250,0.06)'
+        }}>
+          <button
+            type="button"
+            className="calendar-control-btn"
+            onClick={() => changeTargetDate(-1)}
+            style={{ padding: '4px 8px' }}
+          >
+            <ChevronLeft size={15} />
+          </button>
+          <span style={{ fontSize: '0.88rem', fontWeight: 700, color: 'var(--text-primary)', letterSpacing: '0.01em', display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <CalendarIcon size={14} style={{ opacity: 0.6 }} /> {weekRangeLabel}
+          </span>
+          <button
+            type="button"
+            className="calendar-control-btn"
+            onClick={() => changeTargetDate(1)}
+            style={{ padding: '4px 8px' }}
+          >
+            <ChevronRight size={15} />
+          </button>
+        </div>
+
+        {/* 7-column week grid */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '6px', padding: '0.75rem', overflowX: 'auto' }}>
+          {weekDays.map((day, idx) => {
+            const dateBookings = bookingsByDate[day.dateString] || [];
+            const isToday = todayStr === day.dateString;
+
+            return (
+              <div
+                key={idx}
+                style={{
+                  minWidth: '110px',
+                  minHeight: '260px',
+                  backgroundColor: isToday ? 'rgba(99, 102, 241, 0.06)' : 'rgba(255,255,255,0.03)',
+                  border: isToday ? '1.5px solid var(--accent)' : '1px solid rgba(255,255,255,0.08)',
+                  borderRadius: 'var(--radius-md)',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  overflow: 'hidden',
+                }}
+              >
+                {/* Day header */}
+                <div style={{
+                  textAlign: 'center',
+                  padding: '0.6rem 0.5rem',
+                  borderBottom: '1px solid rgba(255,255,255,0.07)',
+                  backgroundColor: isToday ? 'rgba(99,102,241,0.12)' : 'rgba(255,255,255,0.04)',
+                }}>
+                  <div style={{ fontSize: '0.72rem', fontWeight: 700, color: isToday ? 'var(--accent)' : 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                    {day.label}
+                  </div>
+                  <div style={{
+                    fontSize: '1.3rem', fontWeight: 700,
+                    color: isToday ? 'var(--accent)' : 'var(--text-primary)',
+                    marginTop: '2px',
+                  }}>
+                    {day.dayNum}
+                  </div>
+                </div>
+
+                {/* Bookings list */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '5px', padding: '0.5rem', flexGrow: 1, overflowY: 'auto', maxHeight: '320px' }}>
+                  {dateBookings.length === 0 ? (
+                    <div style={{ fontSize: '0.68rem', color: 'var(--text-tertiary)', textAlign: 'center', marginTop: '1rem', fontStyle: 'italic' }}>
+                      Không có lịch
+                    </div>
+                  ) : (
+                    dateBookings.map((b: any) => (
+                      <div
+                        key={b.id}
+                        onClick={(e) => { e.stopPropagation(); handleBookingClick(b); }}
+                        style={{
+                          display: 'flex', flexDirection: 'column', gap: '3px',
+                          padding: '6px 8px',
+                          borderRadius: '6px',
+                          backgroundColor: getStatusBg(b.status),
+                          borderLeft: `3px solid ${getStatusColor(b.status)}`,
+                          cursor: 'pointer',
+                          transition: 'opacity 0.15s ease',
+                        }}
+                        onMouseEnter={e => (e.currentTarget.style.opacity = '0.8')}
+                        onMouseLeave={e => (e.currentTarget.style.opacity = '1')}
+                      >
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '4px' }}>
+                          <span style={{ fontSize: '0.65rem', fontWeight: 700, color: getStatusColor(b.status), whiteSpace: 'nowrap' }}>
+                            {formatTime(b.startTime)}–{formatTime(b.endTime)}
+                          </span>
+                          <span style={{
+                            fontSize: '0.58rem', fontWeight: 600, padding: '1px 5px', borderRadius: '3px',
+                            backgroundColor: getStatusColor(b.status), color: '#fff', whiteSpace: 'nowrap', flexShrink: 0,
+                          }}>
+                            {getStatusLabel(b.status)}
+                          </span>
+                        </div>
+                        <div style={{ fontSize: '0.72rem', fontWeight: 600, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {b.title}
+                        </div>
+                        <div style={{ fontSize: '0.63rem', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          📍 {b.roomName}
+                        </div>
+                      </div>
+                    ))
+                  )}
                 </div>
               </div>
+            );
+          })}
+        </div>
 
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', flexGrow: 1, overflowY: 'auto' }}>
-                {dateBookings.length === 0 ? (
-                  <div style={{ fontSize: '0.7rem', color: 'var(--text-tertiary)', textAlign: 'center', marginTop: '1rem', fontStyle: 'italic' }}>
-                    Không có lịch
-                  </div>
-                ) : (
-                  dateBookings.map((b: any) => (
-                    <div
-                      key={b.id}
-                      onClick={() => handleBookingClick(b)}
-                      style={{
-                        fontSize: '0.75rem',
-                        padding: '6px',
-                        borderRadius: 'var(--radius-sm)',
-                        backgroundColor: 'rgba(255, 255, 255, 0.02)',
-                        borderLeft: `3px solid ${b.status === 'APPROVED' ? 'var(--success)' : b.status === 'PENDING' ? 'var(--warning)' : 'var(--danger)'}`,
-                        cursor: 'pointer'
-                      }}
-                    >
-                      <div style={{ fontWeight: 600, color: '#fff', fontSize: '0.7rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{b.title}</div>
-                      <div style={{ fontSize: '0.65rem', color: 'var(--text-tertiary)', marginTop: '2px' }}>
-                        {formatTime(b.startTime)}
-                      </div>
-                      <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginTop: '2px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                        📍 {b.roomName}
-                      </div>
-                    </div>
-                  ))
-                )}
-              </div>
-            </div>
-          );
-        })}
+        {renderCalendarLegend()}
       </div>
     );
   };
 
   const renderDayCalendar = () => {
-    const sortedBookings = bookings?.filter((b: any) => b.startTime && typeof b.startTime === 'string' && b.startTime.startsWith(targetDate))
-      .sort((a: any, b: any) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime()) || [];
+    const dayBookings = (bookings || [])
+      .filter((b: any) => b.startTime && typeof b.startTime === 'string' && b.startTime.substring(0, 10) === targetDate)
+      .sort((a: any, b: any) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime());
+
+    // Time slots: 00:00 → 24:00 in 2-hour blocks
+    const TIME_SLOTS: { label: string; startH: number; endH: number }[] = [];
+    for (let h = 0; h < 24; h += 2) {
+      TIME_SLOTS.push({
+        label: `${String(h).padStart(2, '0')}:00 – ${String(h + 2).padStart(2, '0')}:00`,
+        startH: h,
+        endH: h + 2,
+      });
+    }
+
+    const getBookingsForSlot = (startH: number, endH: number) => {
+      return dayBookings.filter((b: any) => {
+        const bStart = new Date(b.startTime).getHours() + new Date(b.startTime).getMinutes() / 60;
+        const bEnd = new Date(b.endTime).getHours() + new Date(b.endTime).getMinutes() / 60;
+        // Overlap: booking starts before slot ends AND booking ends after slot starts
+        return bStart < endH && bEnd > startH;
+      });
+    };
+
+    const displayDate = new Date(targetDate + 'T12:00:00');
+    const dateLabel = displayDate.toLocaleDateString('vi-VN', { weekday: 'long', day: '2-digit', month: '2-digit', year: 'numeric' });
+    const todayStr = new Date().toISOString().split('T')[0];
+    const isToday = targetDate === todayStr;
+    const nowH = new Date().getHours() + new Date().getMinutes() / 60;
 
     return (
-      <div style={{ padding: '1.25rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-        <h3 style={{ fontSize: '1.1rem', fontWeight: 600, margin: 0, borderBottom: '1px solid rgba(255,255,255,0.05)', paddingBottom: '0.5rem' }}>
-          Lịch trình Ngày {new Date(targetDate).toLocaleDateString('vi-VN')}
-        </h3>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
+        {/* Day header */}
+        <div style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.75rem',
+          padding: '0.65rem 1.25rem', borderBottom: '1px solid rgba(255,255,255,0.07)',
+          backgroundColor: 'rgba(248,249,250,0.04)'
+        }}>
+          <button type="button" className="calendar-control-btn" onClick={() => changeTargetDate(-1)} style={{ padding: '4px 8px' }}>
+            <ChevronLeft size={15} />
+          </button>
+          <span style={{ fontSize: '0.95rem', fontWeight: 700, color: isToday ? 'var(--accent)' : 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <CalendarIcon size={14} style={{ opacity: 0.6 }} />
+            {dateLabel}
+            {isToday && <span style={{ fontSize: '0.72rem', backgroundColor: 'var(--accent)', color: '#fff', padding: '2px 8px', borderRadius: '10px', fontWeight: 600 }}>Hôm nay</span>}
+          </span>
+          <button type="button" className="calendar-control-btn" onClick={() => changeTargetDate(1)} style={{ padding: '4px 8px' }}>
+            <ChevronRight size={15} />
+          </button>
+        </div>
 
-        {sortedBookings.length === 0 ? (
-          <div style={{ padding: '3rem', textAlign: 'center', color: 'var(--text-tertiary)', fontStyle: 'italic' }}>
-            Không có cuộc họp nào được lên lịch cho ngày này.
-          </div>
-        ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-            {sortedBookings.map((b: any) => (
+        {/* Hourly slots */}
+        <div style={{ padding: '0.75rem 1.25rem', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+          {TIME_SLOTS.map((slot, idx) => {
+            const slotBookings = getBookingsForSlot(slot.startH, slot.endH);
+            const isCurrentSlot = isToday && nowH >= slot.startH && nowH < slot.endH;
+            const hasBookings = slotBookings.length > 0;
+
+            return (
               <div
-                key={b.id}
-                onClick={() => handleBookingClick(b)}
+                key={idx}
                 style={{
                   display: 'flex',
-                  alignItems: 'center',
-                  gap: '1rem',
-                  padding: '0.75rem 1rem',
-                  borderRadius: 'var(--radius-md)',
-                  backgroundColor: 'rgba(255,255,255,0.02)',
-                  borderLeft: `4px solid ${b.status === 'APPROVED' ? 'var(--success)' : b.status === 'PENDING' ? 'var(--warning)' : 'var(--danger)'}`,
-                  cursor: 'pointer'
+                  gap: '12px',
+                  alignItems: 'flex-start',
+                  padding: hasBookings ? '8px 10px' : '6px 10px',
+                  borderRadius: 'var(--radius-sm)',
+                  backgroundColor: isCurrentSlot
+                    ? 'rgba(99, 102, 241, 0.08)'
+                    : hasBookings
+                      ? 'rgba(255,255,255,0.02)'
+                      : 'transparent',
+                  border: isCurrentSlot
+                    ? '1px solid rgba(99,102,241,0.2)'
+                    : hasBookings
+                      ? '1px solid rgba(255,255,255,0.05)'
+                      : '1px solid transparent',
+                  minHeight: hasBookings ? '56px' : '36px',
+                  transition: 'background-color 0.15s ease',
                 }}
               >
-                <div style={{ minWidth: '90px', fontSize: '0.85rem', fontWeight: 600, color: 'var(--accent)' }}>
-                  {formatTime(b.startTime)} - {formatTime(b.endTime)}
+                {/* Time label */}
+                <div style={{
+                  minWidth: '105px', flexShrink: 0,
+                  fontSize: '0.72rem', fontWeight: isCurrentSlot ? 700 : 500,
+                  color: isCurrentSlot ? 'var(--accent)' : 'var(--text-tertiary)',
+                  paddingTop: '2px',
+                  display: 'flex', alignItems: 'center', gap: '5px'
+                }}>
+                  {isCurrentSlot && <span style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: 'var(--accent)', display: 'inline-block', flexShrink: 0 }} />}
+                  {slot.label}
                 </div>
 
-                <div style={{ flexGrow: 1 }}>
-                  <h4 style={{ margin: 0, fontSize: '0.95rem', color: '#fff', fontWeight: 600 }}>{b.title}</h4>
-                  <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '2px' }}>
-                    📍 {b.roomName} • {b.attendee} người tham gia
-                  </div>
-                </div>
+                {/* Divider */}
+                <div style={{
+                  width: '1px', alignSelf: 'stretch',
+                  backgroundColor: isCurrentSlot ? 'rgba(99,102,241,0.25)' : 'rgba(255,255,255,0.05)',
+                  flexShrink: 0
+                }} />
 
-                <div>
-                  <span className={`badge badge-${b.status?.toLowerCase() || 'pending'}`}>
-                    {b.status || 'Chờ duyệt'}
-                  </span>
+                {/* Bookings in this slot */}
+                <div style={{ flexGrow: 1, display: 'flex', flexDirection: 'column', gap: '5px' }}>
+                  {slotBookings.length === 0 ? (
+                    <div style={{ fontSize: '0.68rem', color: 'rgba(255,255,255,0.08)', paddingTop: '2px' }}>
+                      —
+                    </div>
+                  ) : (
+                    slotBookings.map((b: any) => renderBookingCard(b, false))
+                  )}
                 </div>
               </div>
-            ))}
-          </div>
-        )}
+            );
+          })}
+        </div>
+
+        {renderCalendarLegend()}
       </div>
     );
   };
@@ -981,16 +1221,52 @@ export const Bookings: React.FC = () => {
 
             {/* Center: Date picker for Calendar view */}
             {viewMode === 'calendar' ? (
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                {/* Navigation arrows + date display */}
                 <button type="button" className="calendar-control-btn" onClick={() => changeTargetDate(-1)}>
                   <ChevronLeft size={16} />
                 </button>
-                <input
-                  type="date"
-                  className="calendar-date-input"
-                  value={targetDate}
-                  onChange={(e) => setTargetDate(e.target.value)}
-                />
+
+                {/* MONTH & WEEK: show MM/YYYY only | DAY: show full date input */}
+                {calendarViewType === 'DAY' ? (
+                  <input
+                    type="date"
+                    className="calendar-date-input"
+                    value={targetDate}
+                    onChange={(e) => setTargetDate(e.target.value)}
+                  />
+                ) : (
+                  /* Month/Week: clickable MM/YYYY label backed by a hidden month input */
+                  <div style={{ position: 'relative', display: 'inline-flex', alignItems: 'center' }}>
+                    <span style={{
+                      fontSize: '0.88rem', fontWeight: 700, color: 'var(--text-primary)',
+                      padding: '0.38rem 0.7rem',
+                      border: '1px solid var(--border-light)',
+                      borderRadius: 'var(--radius-sm)',
+                      backgroundColor: 'rgba(255,255,255,0.04)',
+                      cursor: 'pointer',
+                      letterSpacing: '0.02em',
+                      userSelect: 'none',
+                    }}>
+                      {String(new Date(targetDate).getMonth() + 1).padStart(2, '0')}/{new Date(targetDate).getFullYear()}
+                    </span>
+                    <input
+                      type="month"
+                      style={{
+                        position: 'absolute', inset: 0, opacity: 0, cursor: 'pointer', width: '100%', height: '100%',
+                      }}
+                      value={`${new Date(targetDate).getFullYear()}-${String(new Date(targetDate).getMonth() + 1).padStart(2, '0')}`}
+                      onChange={(e) => {
+                        if (e.target.value) {
+                          const [y, m] = e.target.value.split('-');
+                          const newDate = new Date(Number(y), Number(m) - 1, 1);
+                          setTargetDate(newDate.toISOString().split('T')[0]);
+                        }
+                      }}
+                    />
+                  </div>
+                )}
+
                 <button type="button" className="calendar-control-btn" onClick={() => changeTargetDate(1)}>
                   <ChevronRight size={16} />
                 </button>
@@ -1006,6 +1282,17 @@ export const Bookings: React.FC = () => {
                   <option value="WEEK">Theo Tuần</option>
                   <option value="DAY">Theo Ngày</option>
                 </select>
+
+                {/* My Bookings Toggle */}
+                <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.8rem', color: filterMyBookings ? 'var(--accent)' : 'var(--text-secondary)', cursor: 'pointer', userSelect: 'none', border: filterMyBookings ? '1px solid var(--accent)' : '1px solid var(--border-light)', borderRadius: 'var(--radius-sm)', padding: '0.3rem 0.65rem', transition: 'all 0.2s ease', backgroundColor: filterMyBookings ? 'rgba(99,102,241,0.1)' : 'transparent' }}>
+                  <input
+                    type="checkbox"
+                    style={{ accentColor: 'var(--accent)', width: '14px', height: '14px' }}
+                    checked={filterMyBookings}
+                    onChange={(e) => setFilterMyBookings(e.target.checked)}
+                  />
+                  Lịch của tôi
+                </label>
               </div>
             ) : (
               /* Right: Filters (list view only) */
@@ -1043,6 +1330,17 @@ export const Bookings: React.FC = () => {
                   value={filterOrganizer}
                   onChange={(e) => setFilterOrganizer(e.target.value)}
                 />
+
+                {/* My Bookings Toggle for list view */}
+                <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.8rem', color: filterMyBookings ? 'var(--accent)' : 'var(--text-secondary)', cursor: 'pointer', userSelect: 'none', border: filterMyBookings ? '1px solid var(--accent)' : '1px solid var(--border-light)', borderRadius: 'var(--radius-sm)', padding: '0.3rem 0.65rem', transition: 'all 0.2s ease', backgroundColor: filterMyBookings ? 'rgba(99,102,241,0.1)' : 'transparent' }}>
+                  <input
+                    type="checkbox"
+                    style={{ accentColor: 'var(--accent)', width: '14px', height: '14px' }}
+                    checked={filterMyBookings}
+                    onChange={(e) => setFilterMyBookings(e.target.checked)}
+                  />
+                  Lịch của tôi
+                </label>
               </div>
             )}
           </div>
@@ -1055,65 +1353,141 @@ export const Bookings: React.FC = () => {
               <div className="skeleton" style={{ height: '80px', width: '100%' }} />
             </div>
           ) : viewMode === 'calendar' ? (
-            bookings?.length === 0 ? (
+            calendarViewType === 'MONTH' ? renderMonthCalendar() :
+              calendarViewType === 'WEEK' ? renderWeekCalendar() :
+                renderDayCalendar()
+          ) : (() => {
+            const listItems: any[] = viewMode === 'list' ? (bookings as any)?.content ?? [] : [];
+            const totalPages: number = viewMode === 'list' ? (bookings as any)?.totalPages ?? 1 : 1;
+            return listItems.length === 0 ? (
               <div style={{ padding: '4rem 2rem', textAlign: 'center', color: 'var(--text-tertiary)' }}>
-                Không tìm thấy cuộc họp nào trong hệ thống cho khoảng thời gian này.
+                Không tìm thấy cuộc họp nào trong hệ thống.
               </div>
             ) : (
-              calendarViewType === 'MONTH' ? renderMonthCalendar() :
-                calendarViewType === 'WEEK' ? renderWeekCalendar() :
-                  renderDayCalendar()
-            )
-          ) : bookings?.length === 0 ? (
-            <div style={{ padding: '4rem 2rem', textAlign: 'center', color: 'var(--text-tertiary)' }}>
-              Không tìm thấy cuộc họp nào trong hệ thống.
-            </div>
-          ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', padding: '1.25rem' }}>
-              {bookings?.map((item: any) => (
-                <div
-                  key={item.id}
-                  onClick={() => handleBookingClick(item)}
-                  className="glass-card glass-card-hover"
-                  style={{
-                    padding: '1.25rem',
-                    borderLeft: `4px solid ${item.status === 'APPROVED' ? 'var(--success)' :
-                      item.status === 'REJECTED' ? 'var(--danger)' :
-                        item.status === 'PENDING' ? 'var(--warning)' : 'var(--text-tertiary)'
-                      }`,
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
-                    flexWrap: 'wrap',
-                    gap: '1rem',
-                    cursor: 'pointer'
-                  }}
-                >
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
-                    <h4 style={{ margin: 0, fontSize: '1.05rem', color: 'var(--text-primary)', fontWeight: 600 }}>{item.title}</h4>
-                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '1rem', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
-                      <span style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
-                        <MapPin size={14} /> {item.roomName} (Tầng {item.floorNumber})
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', padding: '1.25rem' }}>
+                {listItems.map((item: any) => (
+                  <div
+                    key={item.id}
+                    onClick={() => handleBookingClick(item)}
+                    className="glass-card glass-card-hover"
+                    style={{
+                      padding: '1.25rem',
+                      borderLeft: `4px solid ${item.status === 'APPROVED' ? 'var(--success)' :
+                        item.status === 'REJECTED' ? 'var(--danger)' :
+                          item.status === 'PENDING' ? 'var(--warning)' : 'var(--text-tertiary)'
+                        }`,
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      flexWrap: 'wrap',
+                      gap: '1rem',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
+                      <h4 style={{ margin: 0, fontSize: '1.05rem', color: 'var(--text-primary)', fontWeight: 600 }}>{item.title}</h4>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '1rem', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                        <span style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                          <MapPin size={14} /> {item.roomName} (Tầng {item.floorNumber})
+                        </span>
+                        <span style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                          <Clock size={14} /> {formatTime(item.startTime)} - {formatTime(item.endTime)} ({new Date(item.startTime).toLocaleDateString('vi-VN')})
+                        </span>
+                        <span style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                          <Users size={14} /> {item.attendee} người tham gia
+                        </span>
+                      </div>
+                    </div>
+
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                      <span className={`badge badge-${item.status?.toLowerCase() || 'pending'}`}>
+                        {getStatusLabel(item.status)}
                       </span>
-                      <span style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
-                        <Clock size={14} /> {formatTime(item.startTime)} - {formatTime(item.endTime)} ({new Date(item.startTime).toLocaleDateString('vi-VN')})
-                      </span>
-                      <span style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
-                        <Users size={14} /> {item.attendee} người tham gia
-                      </span>
+                      <ChevronRight size={18} style={{ color: 'var(--text-tertiary)' }} />
                     </div>
                   </div>
+                ))}
 
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-                    <span className={`badge badge-${item.status?.toLowerCase() || 'pending'}`}>
-                      {item.status || 'Chờ duyệt'}
+                {/* Pagination */}
+                {totalPages > 1 && (
+                  <div style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: '0.5rem',
+                    paddingTop: '0.75rem',
+                    borderTop: '1px solid var(--border-light)',
+                    marginTop: '0.25rem'
+                  }}>
+                    <button
+                      type="button"
+                      className="btn btn-ghost"
+                      style={{ padding: '0.35rem 0.65rem', fontSize: '0.8rem' }}
+                      disabled={listPage === 0}
+                      onClick={() => setListPage(0)}
+                    >
+                      «
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-ghost"
+                      style={{ padding: '0.35rem 0.65rem', fontSize: '0.8rem' }}
+                      disabled={listPage === 0}
+                      onClick={() => setListPage(p => Math.max(0, p - 1))}
+                    >
+                      <ChevronLeft size={15} />
+                    </button>
+
+                    {Array.from({ length: totalPages }, (_, i) => i)
+                      .filter(i => Math.abs(i - listPage) <= 2)
+                      .map(i => (
+                        <button
+                          key={i}
+                          type="button"
+                          className="btn"
+                          style={{
+                            padding: '0.35rem 0.7rem',
+                            fontSize: '0.8rem',
+                            minWidth: '36px',
+                            backgroundColor: i === listPage ? 'var(--accent)' : 'transparent',
+                            color: i === listPage ? '#fff' : 'var(--text-secondary)',
+                            border: i === listPage ? 'none' : '1px solid var(--border-light)',
+                            fontWeight: i === listPage ? 700 : 400
+                          }}
+                          onClick={() => setListPage(i)}
+                        >
+                          {i + 1}
+                        </button>
+                      ))
+                    }
+
+                    <button
+                      type="button"
+                      className="btn btn-ghost"
+                      style={{ padding: '0.35rem 0.65rem', fontSize: '0.8rem' }}
+                      disabled={listPage >= totalPages - 1}
+                      onClick={() => setListPage(p => Math.min(totalPages - 1, p + 1))}
+                    >
+                      <ChevronRight size={15} />
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-ghost"
+                      style={{ padding: '0.35rem 0.65rem', fontSize: '0.8rem' }}
+                      disabled={listPage >= totalPages - 1}
+                      onClick={() => setListPage(totalPages - 1)}
+                    >
+                      »
+                    </button>
+
+                    <span style={{ fontSize: '0.78rem', color: 'var(--text-tertiary)', marginLeft: '0.25rem' }}>
+                      Trang {listPage + 1} / {totalPages}
                     </span>
-                    <ChevronRight size={18} style={{ color: 'var(--text-tertiary)' }} />
                   </div>
-                </div>
-              ))}
-            </div>
-          )}
+                )}
+              </div>
+            );
+          })()}
         </div>
       ) : (
         renderApprovalsList()
@@ -1303,7 +1677,7 @@ export const Bookings: React.FC = () => {
                   </p>
                 </div>
                 <span className={`badge badge-${selectedBooking.status?.toLowerCase() || 'pending'}`}>
-                  {selectedBooking.status || 'Chờ duyệt'}
+                  {getStatusLabel(selectedBooking.status)}
                 </span>
               </div>
 

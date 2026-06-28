@@ -328,7 +328,40 @@ export const Rooms: React.FC = () => {
     }
   });
 
+  // UPDATE ROOM EQUIPMENT QUANTITY MUTATION
+  const updateRoomEquipQtyMutation = useMutation({
+    mutationFn: async ({ roomId, reId, quantity }: { roomId: number; reId: number; quantity: number }) => {
+      await apiClient.patch(`/room/${roomId}/equipment/${reId}`, { quantity });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['rooms'] });
+      showToast('Cập nhật số lượng thiết bị thành công', 'success');
+    },
+    onError: (err: any) => {
+      const msg = err.response?.data?.message || 'Không thể cập nhật số lượng';
+      showToast(msg, 'error');
+    }
+  });
 
+  // DELETE ROOM EQUIPMENT MUTATION
+  const deleteRoomEquipMutation = useMutation({
+    mutationFn: async ({ roomId, reId }: { roomId: number; reId: number }) => {
+      await apiClient.delete(`/room/${roomId}/equipment/${reId}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['rooms'] });
+      showToast('Xóa thiết bị khỏi phòng thành công', 'success');
+      // Also update selectedRoom locally to refresh UI immediately
+      setSelectedRoom((prev: any) => prev ? {
+        ...prev,
+        equipments: prev.equipments?.filter((e: any) => e.roomEquipmentId !== deleteRoomEquipMutation.variables?.reId)
+      } : prev);
+    },
+    onError: (err: any) => {
+      const msg = err.response?.data?.message || 'Không thể xóa thiết bị';
+      showToast(msg, 'error');
+    }
+  });
 
   // CREATE EQUIPMENT MUTATION
   const createEquipMutation = useMutation({
@@ -423,10 +456,7 @@ export const Rooms: React.FC = () => {
       floorNumber: room.floorNumber,
       description: room.description || '',
       buildingId: room.building?.id || 1,
-      equipments: room.equipments?.map((eq: any) => ({
-        equipmentId: eq.equipmentId || eq.id,
-        quantity: eq.quantity || eq.usingQuantity || 1
-      })) || []
+      equipments: [] // Existing equipments shown separately with inline edit/delete
     });
     setActiveModal('edit');
   };
@@ -489,11 +519,17 @@ export const Rooms: React.FC = () => {
   // Filter options for Room Equipments
   const watchedRoomEquipments = watch('equipments') || [];
   const getAvailableEquipments = (currentIndex: number) => {
-    const selectedIds = watchedRoomEquipments
+    const selectedInForm = watchedRoomEquipments
       .map((item: any, idx: number) => idx !== currentIndex ? Number(item?.equipmentId) : null)
       .filter((id: number | null) => id !== null && !isNaN(id));
 
-    return equipmentsList?.filter((eq: any) => !selectedIds.includes(Number(eq.equipmentId))) || [];
+    // Also exclude equipment already assigned to the room (shown in the existing section)
+    const alreadyAssigned = (selectedRoom?.equipments || []).map((e: any) => Number(e.equipmentId));
+
+    return equipmentsList?.filter((eq: any) => !
+      selectedInForm.includes(Number(eq.equipmentId)) &&
+      !alreadyAssigned.includes(Number(eq.equipmentId))
+    ) || [];
   };
 
   const handleAddEquipmentRow = () => {
@@ -1006,6 +1042,61 @@ export const Rooms: React.FC = () => {
                   </button>
                 </div>
 
+                {/* Existing equipment from server (edit mode only) */}
+                {activeModal === 'edit' && selectedRoom?.equipments && selectedRoom.equipments.length > 0 && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginBottom: '0.75rem' }}>
+                    <span style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)', fontWeight: 600 }}>Hiện có:</span>
+                    {selectedRoom.equipments.map((eq: any) => (
+                      <div key={eq.roomEquipmentId || eq.equipmentId} style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', padding: '0.5rem', borderRadius: 'var(--radius-sm)', backgroundColor: 'rgba(99,102,241,0.05)', border: '1px solid rgba(99,102,241,0.15)' }}>
+                        <span style={{ flexGrow: 1, fontSize: '0.85rem', color: 'var(--text-primary)', fontWeight: 500 }}>
+                          {eq.equipmentName || eq.name}
+                        </span>
+                        <input
+                          type="number"
+                          min={1}
+                          onKeyDown={preventNegativeNumber}
+                          onInput={normalizeNegativeNumber}
+                          defaultValue={eq.quantity || eq.usingQuantity || 1}
+                          className="form-control"
+                          style={{ width: '75px' }}
+                          onBlur={(e) => {
+                            const newQty = Number(e.target.value);
+                            if (newQty > 0 && eq.roomEquipmentId && newQty !== (eq.quantity || eq.usingQuantity)) {
+                              updateRoomEquipQtyMutation.mutate({
+                                roomId: selectedRoom.id,
+                                reId: eq.roomEquipmentId,
+                                quantity: newQty
+                              });
+                            }
+                          }}
+                        />
+                        <button
+                          type="button"
+                          className="btn btn-ghost"
+                          style={{ color: 'var(--danger)', padding: '5px', minWidth: 'auto' }}
+                          title="Xóa thiết bị khỏi phòng"
+                          onClick={() => {
+                            if (!eq.roomEquipmentId) {
+                              showToast('Không tìm thấy ID thiết bị phòng', 'error');
+                              return;
+                            }
+                            if (window.confirm(`Xóa "${eq.equipmentName || eq.name}" khỏi phòng này?`)) {
+                              deleteRoomEquipMutation.mutate({ roomId: selectedRoom.id, reId: eq.roomEquipmentId });
+                              setSelectedRoom((prev: any) => ({
+                                ...prev,
+                                equipments: prev.equipments.filter((e: any) => e.roomEquipmentId !== eq.roomEquipmentId)
+                              }));
+                            }
+                          }}
+                        >
+                          <Trash2 size={15} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* New equipment rows to add */}
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', maxHeight: '180px', overflowY: 'auto' }}>
                   {fields.map((field, index) => (
                     <div key={field.id} style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
