@@ -103,7 +103,7 @@ export const Bookings: React.FC = () => {
   const { data: pendingApprovals, isLoading: isPendingApprovalsLoading } = useQuery({
     queryKey: ['bookings', 'pending'],
     queryFn: async () => {
-      const response = await apiClient.get('/booking/pending?page=0&size=100');
+      const response = await apiClient.get('/booking/pending?page=0&size=10');
       return response.data?.data?.content || [];
     },
     enabled: isApprover,
@@ -282,8 +282,8 @@ export const Bookings: React.FC = () => {
 
   // APPROVE BOOKING MUTATION
   const approveMutation = useMutation({
-    mutationFn: async ({ id, actionType, newData }: { id: number; actionType: string; newData: any }) => {
-      await apiClient.patch(`/booking/approve/${id}`, { actionType, newData });
+    mutationFn: async ({ id, actionType, historyId, newData }: { id: number; actionType: string; historyId: number; newData: any }) => {
+      await apiClient.patch(`/booking/approve/${id}`, { actionType, historyId, newData });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['bookings'] });
@@ -300,8 +300,8 @@ export const Bookings: React.FC = () => {
 
   // REJECT BOOKING MUTATION
   const rejectMutation = useMutation({
-    mutationFn: async ({ id, actionType, reason, oldPayload, newPayload }: { id: number; actionType: string; reason: string; oldPayload: any; newPayload: any }) => {
-      await apiClient.patch(`/booking/reject/${id}`, { actionType, reason, oldPayload, newPayload });
+    mutationFn: async ({ id, actionType, historyId, reason, oldPayload, newPayload }: { id: number; actionType: string; historyId: number; reason: string; oldPayload: any; newPayload: any }) => {
+      await apiClient.patch(`/booking/reject/${id}`, { actionType, historyId, reason, oldPayload, newPayload });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['bookings'] });
@@ -1980,6 +1980,7 @@ export const Bookings: React.FC = () => {
                   rejectMutation.mutate({
                     id: selectedHistory.bookingId,
                     actionType: selectedHistory.actionType,
+                    historyId: selectedHistory.historyId,
                     reason: notes,
                     oldPayload: selectedHistory.oldData,
                     newPayload: selectedHistory.newData
@@ -1998,6 +1999,7 @@ export const Bookings: React.FC = () => {
                   approveMutation.mutate({
                     id: selectedHistory.bookingId,
                     actionType: selectedHistory.actionType,
+                    historyId: selectedHistory.historyId,
                     newData: selectedHistory.newData
                   });
                 }}
