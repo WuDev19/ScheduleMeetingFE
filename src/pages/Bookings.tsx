@@ -174,6 +174,20 @@ const bookingFormSchema = z.object({
 
 type BookingFormValues = z.infer<typeof bookingFormSchema>;
 
+const editBookingFormSchema = z.object({
+  title: z.string().min(1, 'Vui lòng nhập tiêu đề cuộc họp'),
+  description: z.string().optional(),
+  roomId: z.coerce.number().min(1, 'Vui lòng chọn phòng họp'),
+  start: z.string().min(1, 'Vui lòng chọn thời gian bắt đầu'),
+  end: z.string().min(1, 'Vui lòng chọn thời gian kết thúc'),
+  attendee: z.coerce.number().min(1, 'Số lượng tham gia tối thiểu là 1'),
+}).refine((data) => new Date(data.start) < new Date(data.end), {
+  message: "Thời gian kết thúc phải diễn ra sau thời gian bắt đầu",
+  path: ["end"]
+});
+
+type EditBookingFormValues = z.infer<typeof editBookingFormSchema>;
+
 export const Bookings: React.FC = () => {
   const { user, hasAuthority } = useAuth();
   const { showToast } = useToast();
@@ -312,6 +326,15 @@ export const Bookings: React.FC = () => {
     name: 'equipments'
   });
 
+  const {
+    register: registerEdit,
+    handleSubmit: handleSubmitEdit,
+    reset: resetEdit,
+    formState: { errors: errorsEdit }
+  } = useForm<EditBookingFormValues>({
+    resolver: zodResolver(editBookingFormSchema) as any,
+  });
+
   // CREATE BOOKING MUTATION
   const createBookingMutation = useMutation({
     mutationFn: async (data: BookingFormValues) => {
@@ -346,6 +369,55 @@ export const Bookings: React.FC = () => {
       showToast(msg, 'error');
     }
   });
+
+  // UPDATE BOOKING MUTATION
+  const updateBookingMutation = useMutation({
+    mutationFn: async (data: EditBookingFormValues) => {
+      const hasRoomChanged = Number(data.roomId) !== Number(selectedBooking.roomId);
+      const hasTimeChanged = data.start !== selectedBooking.startTime?.substring(0, 16) || data.end !== selectedBooking.endTime?.substring(0, 16);
+
+      const payload: {
+        title: string;
+        description: string;
+        attendeeCount: number;
+        roomId?: number;
+        start?: string;
+        end?: string;
+        newRoomId?: number;
+      } = {
+        title: data.title,
+        description: data.description || '',
+        attendeeCount: Number(data.attendee),
+      };
+
+      if (hasRoomChanged || hasTimeChanged) {
+        payload.roomId = Number(data.roomId);
+        payload.start = formatDateTimeForApi(data.start);
+        payload.end = formatDateTimeForApi(data.end);
+        if (hasRoomChanged) {
+          payload.newRoomId = Number(data.roomId);
+        }
+      }
+
+      await apiClient.patch(`/booking/${selectedBooking.id}`, payload);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['bookings'] });
+      queryClient.invalidateQueries({ queryKey: ['bookings', 'pending'] });
+      showToast('Cập nhật lịch họp thành công', 'success');
+      setActiveModal(null);
+      setSearchParams({});
+    },
+    onError: (err: unknown) => {
+      const error = err as { response?: { data?: { message?: string } } };
+      const msg = error.response?.data?.message || 'Có lỗi xảy ra khi cập nhật lịch họp';
+      showToast(msg, 'error');
+    }
+  });
+
+  const onEditSubmit = (data: EditBookingFormValues) => {
+    updateBookingMutation.mutate(data);
+  };
 
   // CANCEL BOOKING MUTATION
   const cancelBookingMutation = useMutation({
@@ -535,6 +607,11 @@ export const Bookings: React.FC = () => {
   const getRoomNameById = (id: number) => {
     const r = rooms?.find((item: any) => Number(item.id) === Number(id));
     return r ? r.roomName : `Phòng #${id}`;
+  };
+
+  const getEquipmentNameById = (id: number) => {
+    const eq = equipments?.find((item: any) => Number(item.equipmentId) === Number(id));
+    return eq ? eq.equipmentName : `Thiết bị #${id}`;
   };
 
   const renderOldField = (label: string, oldVal: any, newVal: any, formatFn?: (val: any) => string) => {
@@ -1824,6 +1901,103 @@ export const Bookings: React.FC = () => {
         </div>
       )}
 
+      {activeModal === 'edit' && (
+        <div className="modal-overlay">
+          <form onSubmit={handleSubmitEdit(onEditSubmit)} className="modal-content" style={{ maxWidth: '650px' }}>
+            <div className="modal-header">
+              <h3 style={{ margin: 0, fontSize: '1.15rem' }}>Cập nhật lịch họp</h3>
+              <button type="button" className="btn btn-ghost" style={{ padding: '4px', minWidth: 'auto' }} onClick={() => setActiveModal(null)}>
+                <XCircle size={20} />
+              </button>
+            </div>
+
+            <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+              <div className="form-group">
+                <label className="form-label" htmlFor="edit-title">Tiêu đề cuộc họp *</label>
+                <input
+                  id="edit-title"
+                  className="form-control"
+                  placeholder="Họp tổng kết tuần / Kick-off dự án..."
+                  {...registerEdit('title')}
+                />
+                {errorsEdit.title && <span className="form-error">{errorsEdit.title.message}</span>}
+              </div>
+
+              <div className="form-group">
+                <label className="form-label" htmlFor="edit-desc">Mô tả nội dung cuộc họp</label>
+                <textarea
+                  id="edit-desc"
+                  className="form-control"
+                  style={{ minHeight: '50px', resize: 'vertical' }}
+                  placeholder="Thảo luận kế hoạch phát triển quý tiếp theo..."
+                  {...registerEdit('description')}
+                />
+              </div>
+
+              <div className="grid-cols-2" style={{ gap: '1rem' }}>
+                <div className="form-group">
+                  <label className="form-label" htmlFor="edit-room">Chọn Phòng họp *</label>
+                  <select
+                    id="edit-room"
+                    className="form-control"
+                    {...registerEdit('roomId')}
+                  >
+                    <option value="">-- Chọn phòng trống --</option>
+                    {rooms?.map((r: any) => (
+                      <option key={r.id} value={r.id}>{r.roomName} (Tầng {r.floorNumber} - {r.capacity} chỗ)</option>
+                    ))}
+                  </select>
+                  {errorsEdit.roomId && <span className="form-error">{errorsEdit.roomId.message}</span>}
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label" htmlFor="edit-attendees">Số người tham dự họp *</label>
+                  <input
+                    id="edit-attendees"
+                    type="number"
+                    className="form-control"
+                    placeholder="8"
+                    {...registerEdit('attendee')}
+                  />
+                  {errorsEdit.attendee && <span className="form-error">{errorsEdit.attendee.message}</span>}
+                </div>
+              </div>
+
+              <div className="grid-cols-2" style={{ gap: '1rem' }}>
+                <div className="form-group">
+                  <label className="form-label" htmlFor="edit-start">Thời gian bắt đầu *</label>
+                  <input
+                    id="edit-start"
+                    type="datetime-local"
+                    className="form-control"
+                    {...registerEdit('start')}
+                  />
+                  {errorsEdit.start && <span className="form-error">{errorsEdit.start.message}</span>}
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label" htmlFor="edit-end">Thời gian kết thúc *</label>
+                  <input
+                    id="edit-end"
+                    type="datetime-local"
+                    className="form-control"
+                    {...registerEdit('end')}
+                  />
+                  {errorsEdit.end && <span className="form-error">{errorsEdit.end.message}</span>}
+                </div>
+              </div>
+            </div>
+
+            <div className="modal-footer">
+              <button type="button" className="btn btn-secondary" onClick={() => setActiveModal(null)}>Hủy</button>
+              <button type="submit" className="btn btn-primary" disabled={updateBookingMutation.isPending}>
+                {updateBookingMutation.isPending ? 'Đang lưu...' : 'Lưu thay đổi'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
       {/* DETAIL MODAL */}
       {activeModal === 'detail' && selectedBooking && (
         <div className="modal-overlay">
@@ -2029,34 +2203,72 @@ export const Bookings: React.FC = () => {
                     );
                   })()}
 
-                  {/* Row 2: Đóng and Hủy lịch đặt - same equal-width grid as row 1 */}
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem' }}>
-                    <button
-                      type="button"
-                      className="btn btn-secondary"
-                      style={{
-                        padding: '0.55rem 1.1rem', fontSize: '0.85rem', fontWeight: 600, width: '100%',
-                        gridColumn: ((selectedBooking.status === 'PENDING' || selectedBooking.status === 'APPROVED') && !isApprover) ? undefined : '1 / -1'
-                      }}
-                      onClick={() => {
-                        closeDetailModal();
-                        setShowCancelConfirm(false);
-                        setCancelReason('');
-                      }}
-                    >
-                      Đóng
-                    </button>
-                    {(selectedBooking.status === 'PENDING' || selectedBooking.status === 'APPROVED') && !isApprover && (
-                      <button
-                        type="button"
-                        className="btn btn-danger"
-                        style={{ padding: '0.55rem 1.1rem', fontSize: '0.85rem', fontWeight: 600, width: '100%' }}
-                        onClick={() => setShowCancelConfirm(true)}
-                      >
-                        Hủy lịch đặt
-                      </button>
-                    )}
-                  </div>
+                  {/* Row 2: Đóng, Chỉnh sửa, and Hủy lịch đặt */}
+                  {(() => {
+                    const isEditableStatus = selectedBooking.status === 'PENDING' || selectedBooking.status === 'APPROVED';
+                    const isBookingOwner = selectedBooking.username === user?.username;
+                    const isAdmin = hasAuthority('ADMIN');
+                    const canEdit = (isBookingOwner || isAdmin) && isEditableStatus;
+                    const canCancel = isBookingOwner && isEditableStatus && !isApprover;
+
+                    let cols = '1fr';
+                    if (canEdit && canCancel) {
+                      cols = '1fr 1fr 1fr';
+                    } else if (canEdit || canCancel) {
+                      cols = '1fr 1fr';
+                    }
+
+                    return (
+                      <div style={{ display: 'grid', gridTemplateColumns: cols, gap: '0.5rem' }}>
+                        <button
+                          type="button"
+                          className="btn btn-secondary"
+                          style={{
+                            padding: '0.55rem 1.1rem', fontSize: '0.85rem', fontWeight: 600, width: '100%'
+                          }}
+                          onClick={() => {
+                            closeDetailModal();
+                            setShowCancelConfirm(false);
+                            setCancelReason('');
+                          }}
+                        >
+                          Đóng
+                        </button>
+                        {canEdit && (
+                          <button
+                            type="button"
+                            className="btn btn-primary"
+                            style={{
+                              padding: '0.55rem 1.1rem', fontSize: '0.85rem', fontWeight: 600, width: '100%'
+                            }}
+                            onClick={() => {
+                              setActiveModal('edit');
+                              resetEdit({
+                                title: selectedBooking.title,
+                                description: selectedBooking.description || '',
+                                roomId: selectedBooking.roomId,
+                                start: selectedBooking.startTime ? selectedBooking.startTime.substring(0, 16) : '',
+                                end: selectedBooking.endTime ? selectedBooking.endTime.substring(0, 16) : '',
+                                attendee: selectedBooking.attendee
+                              });
+                            }}
+                          >
+                            Chỉnh sửa
+                          </button>
+                        )}
+                        {canCancel && (
+                          <button
+                            type="button"
+                            className="btn btn-danger"
+                            style={{ padding: '0.55rem 1.1rem', fontSize: '0.85rem', fontWeight: 600, width: '100%' }}
+                            onClick={() => setShowCancelConfirm(true)}
+                          >
+                            Hủy lịch đặt
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })()}
                 </>
               )}
             </div>
@@ -2313,26 +2525,60 @@ export const Bookings: React.FC = () => {
                 </h4>
 
                 {selectedHistory.actionType === 'CREATED' ? (
-                  /* Single Card for New Registration */
-                  <div className="glass-card" style={{
-                    padding: '1.25rem',
-                    borderRadius: 'var(--radius-lg)',
-                    boxShadow: '0 8px 32px rgba(0, 0, 0, 0.25), 0 2px 8px rgba(0, 0, 0, 0.15)',
-                    border: '1px solid var(--border-light)',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: '0.85rem'
-                  }}>
-                    <h5 style={{ margin: 0, fontSize: '1.05rem', fontWeight: 700, color: 'var(--accent)', borderBottom: '1px solid var(--border-light)', paddingBottom: '0.5rem' }}>
-                      Thông tin phòng họp đăng ký mới
-                    </h5>
-                    {renderSingleField('Tiêu đề cuộc họp', selectedHistory.newData?.title || selectedHistory.title)}
-                    {renderSingleField('Mô tả cuộc họp', selectedHistory.newData?.description || selectedHistory.description || '(trống)')}
-                    {renderSingleField('Phòng họp', getRoomNameById(selectedHistory.newData?.roomId) || selectedHistory.roomName)}
-                    {renderSingleField('Thời gian bắt đầu', selectedHistory.newData?.startTime || selectedHistory.startTime, formatFullDate)}
-                    {renderSingleField('Thời gian kết thúc', selectedHistory.newData?.endTime || selectedHistory.endTime, formatFullDate)}
-                    {renderSingleField('Số người tham gia', selectedHistory.newData?.attendeeCount || selectedHistory.attendee, (val) => val ? `${val} người` : '')}
-                  </div>
+                  <>
+                    {/* Single Card for New Registration */}
+                    <div className="glass-card" style={{
+                      padding: '1.25rem',
+                      borderRadius: 'var(--radius-lg)',
+                      boxShadow: '0 8px 32px rgba(0, 0, 0, 0.25), 0 2px 8px rgba(0, 0, 0, 0.15)',
+                      border: '1px solid var(--border-light)',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '0.85rem'
+                    }}>
+                      <h5 style={{ margin: 0, fontSize: '1.05rem', fontWeight: 700, color: 'var(--accent)', borderBottom: '1px solid var(--border-light)', paddingBottom: '0.5rem' }}>
+                        Thông tin phòng họp đăng ký mới
+                      </h5>
+                      {renderSingleField('Tiêu đề cuộc họp', selectedHistory.newData?.title || selectedHistory.title)}
+                      {renderSingleField('Mô tả cuộc họp', selectedHistory.newData?.description || selectedHistory.description || '(trống)')}
+                      {renderSingleField('Phòng họp', getRoomNameById(selectedHistory.newData?.roomId) || selectedHistory.roomName)}
+                      {renderSingleField('Thời gian bắt đầu', selectedHistory.newData?.startTime || selectedHistory.startTime, formatFullDate)}
+                      {renderSingleField('Thời gian kết thúc', selectedHistory.newData?.endTime || selectedHistory.endTime, formatFullDate)}
+                      {renderSingleField('Số người tham gia', selectedHistory.newData?.attendeeCount || selectedHistory.attendee, (val) => val ? `${val} người` : '')}
+                    </div>
+
+                    {/* Equipment list request details for CREATED booking if present */}
+                    {selectedHistory.newData?.equipments && selectedHistory.newData.equipments.length > 0 && (
+                      <div style={{ marginTop: '1.25rem' }}>
+                        <h5 style={{ margin: '0 0 0.5rem 0', fontSize: '0.85rem', fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                          Thiết bị yêu cầu kèm theo
+                        </h5>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+                          {selectedHistory.newData.equipments.map((eq: any, idx: number) => (
+                            <div key={idx} style={{
+                              display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                              padding: '0.5rem 0.75rem',
+                              backgroundColor: 'var(--bg-tertiary)',
+                              borderRadius: 'var(--radius-sm)',
+                              border: '1px solid var(--border-light)',
+                              fontSize: '0.85rem'
+                            }}>
+                              <span style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', color: 'var(--text-primary)' }}>
+                                <Package size={13} style={{ color: 'var(--text-tertiary)', flexShrink: 0 }} />
+                                {getEquipmentNameById(eq.equipmentId)}
+                              </span>
+                              <span style={{
+                                backgroundColor: 'rgba(99,102,241,0.12)',
+                                color: 'var(--accent)',
+                                fontWeight: 700, fontSize: '0.78rem',
+                                padding: '2px 8px', borderRadius: '4px'
+                              }}>x{eq.quantity}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </>
 
                 ) : selectedHistory.actionType === 'ADD_EQUIPMENT' ? (
                   /* ADD_EQUIPMENT: specialized layout showing only equipment requests */
