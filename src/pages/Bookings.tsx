@@ -21,7 +21,8 @@ import {
   Mail,
   XCircle,
   FileSpreadsheet,
-  Package
+  Package,
+  ArrowRight
 } from 'lucide-react';
 
 // Helper to format date string to "yyyy-MM-dd HH:mm:ssXXX"
@@ -44,6 +45,112 @@ const formatDateTimeForApi = (dateTimeStr: string): string => {
   const offsetMins = pad(absOffsetMinutes % 60);
 
   return `${yyyy}-${MM}-${dd} ${hh}:${mm}:${ss}${offsetSign}${offsetHours}:${offsetMins}`;
+};
+
+const EquipmentRow: React.FC<{
+  eq: any;
+  canEdit: boolean;
+  onUpdate: (quantity: number) => void;
+  isPending: boolean;
+}> = ({ eq, canEdit, onUpdate, isPending }) => {
+  const [qty, setQty] = useState(eq.usingQuantity || eq.quantity || 1);
+  const [isEditing, setIsEditing] = useState(false);
+
+  useEffect(() => {
+    setQty(eq.usingQuantity || eq.quantity || 1);
+  }, [eq]);
+
+  return (
+    <div
+      style={{
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        padding: '0.5rem 0.75rem',
+        backgroundColor: 'var(--bg-primary)',
+        borderRadius: 'var(--radius-sm)',
+        border: '1px solid var(--border-light)',
+        fontSize: '0.8rem',
+        gap: '0.5rem'
+      }}
+    >
+      <span>{eq.equipmentName}</span>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+        {isEditing && canEdit ? (
+          <>
+            <input
+              type="number"
+              className="form-control"
+              style={{ width: '60px', padding: '2px 5px', fontSize: '0.75rem', height: '26px' }}
+              min={1}
+              value={qty}
+              onChange={(e) => setQty(Math.max(1, parseInt(e.target.value, 10) || 1))}
+            />
+            <button
+              type="button"
+              className="btn"
+              style={{
+                backgroundColor: 'var(--success)',
+                color: '#fff',
+                padding: '2px 8px',
+                fontSize: '0.7rem',
+                minWidth: 'auto',
+                height: '26px'
+              }}
+              disabled={isPending}
+              onClick={() => {
+                if (qty === (eq.usingQuantity || eq.quantity)) {
+                  setIsEditing(false);
+                  return;
+                }
+                onUpdate(qty);
+                setIsEditing(false);
+              }}
+            >
+              Lưu
+            </button>
+            <button
+              type="button"
+              className="btn btn-secondary"
+              style={{
+                padding: '2px 8px',
+                fontSize: '0.7rem',
+                minWidth: 'auto',
+                height: '26px'
+              }}
+              onClick={() => {
+                setQty(eq.usingQuantity || eq.quantity || 1);
+                setIsEditing(false);
+              }}
+            >
+              Hủy
+            </button>
+          </>
+        ) : (
+          <>
+            <strong>Số lượng: x{eq.usingQuantity || eq.quantity}</strong>
+            {canEdit && (
+              <button
+                type="button"
+                className="btn btn-ghost"
+                style={{
+                  color: 'var(--accent)',
+                  padding: '2px 6px',
+                  fontSize: '0.7rem',
+                  minWidth: 'auto',
+                  border: '1px solid var(--border-light)',
+                  borderRadius: '4px'
+                }}
+                onClick={() => setIsEditing(true)}
+              >
+                Sửa số lượng
+              </button>
+            )}
+          </>
+        )}
+      </div>
+    </div>
+  );
 };
 
 // Zod schemas
@@ -276,6 +383,24 @@ export const Bookings: React.FC = () => {
     },
     onError: (err: any) => {
       const msg = err.response?.data?.message || 'Có lỗi xảy ra khi gửi yêu cầu bổ sung thiết bị';
+      showToast(msg, 'error');
+    }
+  });
+
+  // UPDATE EQUIPMENT QUANTITY MUTATION
+  const updateEquipmentQuantityMutation = useMutation({
+    mutationFn: async ({ bookingId, equipmentId, beId, quantity }: { bookingId: number; equipmentId: number; beId: number; quantity: number }) => {
+      await apiClient.patch(`/booking/${bookingId}/equipment/${equipmentId}/${beId}`, { quantity });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['bookings'] });
+      queryClient.invalidateQueries({ queryKey: ['bookings', 'pending'] });
+      showToast('Yêu cầu cập nhật số lượng thiết bị thành công, chờ phê duyệt', 'success');
+      setActiveModal(null);
+      setSearchParams({});
+    },
+    onError: (err: any) => {
+      const msg = err.response?.data?.message || 'Có lỗi xảy ra khi cập nhật số lượng thiết bị';
       showToast(msg, 'error');
     }
   });
@@ -564,7 +689,14 @@ export const Bookings: React.FC = () => {
     const handleViewHistoryDetail = async (historyId: number) => {
       try {
         const response = await apiClient.get(`/booking/pending/detail/${historyId}`);
-        setSelectedHistory(response.data?.data);
+        const historyData = response.data?.data;
+        setSelectedHistory(historyData);
+
+        if (historyData?.bookingId) {
+          const detailRes = await apiClient.get(`/booking/${historyData.bookingId}`);
+          setSelectedBooking(detailRes.data?.data);
+        }
+
         setNotes(''); // Clear notes input
         setActiveModal('approval-detail');
       } catch (err: any) {
@@ -1743,23 +1875,26 @@ export const Bookings: React.FC = () => {
                 <div>
                   <h4 style={{ fontSize: '0.9rem', fontWeight: 700, color: 'var(--text-primary)', marginBottom: '0.5rem' }}>Thiết bị họp bổ sung</h4>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
-                    {selectedBooking.equipments.map((eq: any, index: number) => (
-                      <div
-                        key={index}
-                        style={{
-                          display: 'flex',
-                          justifyContent: 'space-between',
-                          padding: '0.5rem 0.75rem',
-                          backgroundColor: 'var(--bg-primary)',
-                          borderRadius: 'var(--radius-sm)',
-                          border: '1px solid var(--border-light)',
-                          fontSize: '0.8rem'
-                        }}
-                      >
-                        <span>{eq.equipmentName}</span>
-                        <strong>Số lượng: x{eq.usingQuantity || eq.quantity}</strong>
-                      </div>
-                    ))}
+                    {selectedBooking.equipments.map((eq: any, index: number) => {
+                      const isOwner = !isApprover;
+                      const canEdit = (selectedBooking.status === 'PENDING' || selectedBooking.status === 'APPROVED') && isOwner;
+                      return (
+                        <EquipmentRow
+                          key={eq.bookingEquipmentId || index}
+                          eq={eq}
+                          canEdit={canEdit}
+                          isPending={updateEquipmentQuantityMutation.isPending}
+                          onUpdate={(quantity) => {
+                            updateEquipmentQuantityMutation.mutate({
+                              bookingId: selectedBooking.id,
+                              equipmentId: eq.equipmentId,
+                              beId: eq.bookingEquipmentId,
+                              quantity
+                            });
+                          }}
+                        />
+                      );
+                    })}
                   </div>
                 </div>
               )}
@@ -2137,7 +2272,7 @@ export const Bookings: React.FC = () => {
                     {renderSingleField('Số người tham gia', selectedHistory.newData?.attendeeCount || selectedHistory.attendee, (val) => val ? `${val} người` : '')}
                   </div>
 
-                ) : (selectedHistory.actionType === 'ADD_EQUIPMENT' || selectedHistory.actionType === 'UPDATE_EQUIP_QUANTITY') ? (
+                ) : selectedHistory.actionType === 'ADD_EQUIPMENT' ? (
                   /* ADD_EQUIPMENT: specialized layout showing only equipment requests */
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
 
@@ -2268,6 +2403,112 @@ export const Bookings: React.FC = () => {
                             ))}
                           </div>
 
+                        </div>
+                      );
+                    })()}
+                  </div>
+
+                ) : selectedHistory.actionType === 'UPDATE_EQUIP_QUANTITY' ? (
+                  /* UPDATE_EQUIP_QUANTITY: specialized layout for updating quantity of a single equipment */
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+
+                    {/* Context info — booking this applies to */}
+                    <div className="glass-card" style={{
+                      padding: '1rem',
+                      borderRadius: 'var(--radius-md)',
+                      backgroundColor: 'rgba(99, 102, 241, 0.04)',
+                      border: '1px solid rgba(99, 102, 241, 0.2)',
+                      display: 'flex', flexDirection: 'column', gap: '0.5rem'
+                    }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.82rem', color: 'var(--text-secondary)' }}>
+                        <Package size={14} style={{ color: 'var(--accent)', flexShrink: 0 }} />
+                        <span>Yêu cầu cập nhật số lượng thiết bị cho cuộc họp:</span>
+                        <strong style={{ color: 'var(--text-primary)' }}>{selectedHistory.title}</strong>
+                      </div>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '1rem', fontSize: '0.78rem', color: 'var(--text-tertiary)', paddingLeft: '1.4rem' }}>
+                        <span>📍 {selectedHistory.roomName}</span>
+                        <span>⏰ {formatTime(selectedHistory.startTime?.toString())} – {formatTime(selectedHistory.endTime?.toString())} ({new Date(selectedHistory.startTime?.toString()).toLocaleDateString('vi-VN')})</span>
+                        <span>👤 {selectedHistory.userBooked}</span>
+                      </div>
+                    </div>
+
+                    {/* Change comparison — large, clear old vs new visual */}
+                    {(() => {
+                      const beId = selectedHistory.newData?.bookingEquipmentId || selectedHistory.newData?.beId;
+                      const oldQty = Number(selectedHistory.oldData?.quantity) || 0;
+                      const newQty = Number(selectedHistory.newData?.quantity) || 0;
+                      const matchingEquip = (selectedBooking?.equipments || []).find(
+                        (e: any) => Number(e.bookingEquipmentId) === Number(beId)
+                      );
+                      const eqName = matchingEquip?.equipmentName || `Thiết bị #${beId}`;
+                      const diff = newQty - oldQty;
+                      const isIncrease = diff > 0;
+                      const isDecrease = diff < 0;
+                      const deltaColor = isIncrease ? 'var(--success)' : isDecrease ? 'var(--danger)' : 'var(--text-tertiary)';
+                      const deltaBg = isIncrease ? 'rgba(16,185,129,0.12)' : isDecrease ? 'rgba(239,68,68,0.12)' : 'rgba(255,255,255,0.06)';
+
+                      return (
+                        <div className="glass-card" style={{
+                          padding: '1.25rem',
+                          borderRadius: 'var(--radius-lg)',
+                          border: '1px solid rgba(245, 158, 11, 0.25)',
+                          backgroundColor: 'rgba(245, 158, 11, 0.02)',
+                          display: 'flex', flexDirection: 'column', gap: '1rem'
+                        }}>
+                          {/* Equipment name header */}
+                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+                              <Package size={18} style={{ color: 'var(--warning)', flexShrink: 0 }} />
+                              <span style={{ fontSize: '1.05rem', fontWeight: 700, color: 'var(--text-primary)' }}>{eqName}</span>
+                            </div>
+                            <span style={{
+                              fontSize: '0.78rem', fontWeight: 700,
+                              padding: '3px 10px', borderRadius: '6px',
+                              backgroundColor: deltaBg, color: deltaColor
+                            }}>
+                              {isIncrease ? `+${diff} (Tăng)` : isDecrease ? `${diff} (Giảm)` : 'Không đổi'}
+                            </span>
+                          </div>
+
+                          {/* Old vs New big numbers */}
+                          <div style={{ display: 'grid', gridTemplateColumns: '1fr auto 1fr', alignItems: 'center', gap: '1rem' }}>
+                            {/* Old quantity box */}
+                            <div style={{
+                              textAlign: 'center',
+                              padding: '1rem',
+                              borderRadius: 'var(--radius-md)',
+                              backgroundColor: 'rgba(239, 68, 68, 0.06)',
+                              border: '1px solid rgba(239, 68, 68, 0.2)'
+                            }}>
+                              <div style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--danger)', textTransform: 'uppercase', letterSpacing: '0.03em', marginBottom: '0.4rem' }}>
+                                Số lượng cũ
+                              </div>
+                              <div style={{ fontSize: '2rem', fontWeight: 800, color: 'var(--text-primary)', textDecoration: 'line-through', textDecorationColor: 'var(--danger)', opacity: 0.7 }}>
+                                {oldQty}
+                              </div>
+                            </div>
+
+                            {/* Arrow */}
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-tertiary)' }}>
+                              <ArrowRight size={28} />
+                            </div>
+
+                            {/* New quantity box */}
+                            <div style={{
+                              textAlign: 'center',
+                              padding: '1rem',
+                              borderRadius: 'var(--radius-md)',
+                              backgroundColor: 'rgba(16, 185, 129, 0.06)',
+                              border: '1px solid rgba(16, 185, 129, 0.25)'
+                            }}>
+                              <div style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--success)', textTransform: 'uppercase', letterSpacing: '0.03em', marginBottom: '0.4rem' }}>
+                                Số lượng mới (Yêu cầu)
+                              </div>
+                              <div style={{ fontSize: '2rem', fontWeight: 800, color: 'var(--success)' }}>
+                                {newQty}
+                              </div>
+                            </div>
+                          </div>
                         </div>
                       );
                     })()}

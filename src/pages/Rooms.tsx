@@ -949,7 +949,7 @@ export const Rooms: React.FC = () => {
           <form onSubmit={handleRoomSubmit(onSaveRoom)} className="modal-content" style={{ maxWidth: '600px' }}>
             <div className="modal-header">
               <h3 style={{ margin: 0, fontSize: '1.15rem' }}>
-                {activeModal === 'create' ? 'Thành lập phòng họp mới' : 'Chỉnh sửa phòng họp'}
+                {activeModal === 'create' ? 'Tạo phòng họp mới' : 'Chỉnh sửa phòng họp'}
               </h3>
               <button type="button" className="btn btn-ghost" style={{ padding: '4px', minWidth: 'auto' }} onClick={() => setActiveModal(null)}>
                 <XCircle size={20} />
@@ -1370,6 +1370,7 @@ export const Rooms: React.FC = () => {
                   onInput={normalizeNegativeNumber}
                   className="form-control"
                   placeholder="10"
+                  min={1}
                   {...equipRegister('availableQuantity')}
                 />
                 {equipErrors.availableQuantity && <span className="form-error">{equipErrors.availableQuantity.message}</span>}
