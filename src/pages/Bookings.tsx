@@ -26,6 +26,50 @@ import {
   CheckCircle
 } from 'lucide-react';
 
+// Helper to format Date to local YYYY-MM-DD
+const formatLocalYYYYMMDD = (date: Date): string => {
+  const yyyy = date.getFullYear();
+  const MM = String(date.getMonth() + 1).padStart(2, '0');
+  const dd = String(date.getDate()).padStart(2, '0');
+  return `${yyyy}-${MM}-${dd}`;
+};
+
+// Helper to parse local YYYY-MM-DD to a local Date object (at midnight)
+const parseLocalYYYYMMDD = (dateStr: string): Date => {
+  const [yyyy, MM, dd] = dateStr.split('-').map(Number);
+  return new Date(yyyy, MM - 1, dd || 1);
+};
+
+// Helper to get local YYYY-MM-DD from an API date/time string
+const getLocalDateStr = (dateTimeStr: string | undefined | null): string => {
+  if (!dateTimeStr) return '';
+  const date = new Date(dateTimeStr);
+  if (isNaN(date.getTime())) return '';
+  return formatLocalYYYYMMDD(date);
+};
+
+// Helper to format Date/string to local YYYY-MM-DDTHH:mm for datetime-local input
+const formatDateTimeLocal = (dateTimeStr: string | undefined | null): string => {
+  if (!dateTimeStr) return '';
+  const date = new Date(dateTimeStr);
+  if (isNaN(date.getTime())) return '';
+  const pad = (num: number) => String(num).padStart(2, '0');
+  const yyyy = date.getFullYear();
+  const MM = pad(date.getMonth() + 1);
+  const dd = pad(date.getDate());
+  const hh = pad(date.getHours());
+  const mm = pad(date.getMinutes());
+  return `${yyyy}-${MM}-${dd}T${hh}:${mm}`;
+};
+
+// Helper to check if two time strings represent the same instant
+const isSameTime = (timeStrA: string | undefined | null, timeStrB: string | undefined | null): boolean => {
+  if (!timeStrA || !timeStrB) return timeStrA === timeStrB;
+  const dA = new Date(timeStrA);
+  const dB = new Date(timeStrB);
+  return dA.getTime() === dB.getTime();
+};
+
 // Helper to format date string to "yyyy-MM-dd HH:mm:ssXXX"
 const formatDateTimeForApi = (dateTimeStr: string): string => {
   if (!dateTimeStr) return '';
@@ -200,7 +244,7 @@ export const Bookings: React.FC = () => {
   // Views & Filters state
   const [viewMode, setViewMode] = useState<'calendar' | 'list'>('calendar');
   const [calendarViewType, setCalendarViewType] = useState<'DAY' | 'WEEK' | 'MONTH'>('MONTH');
-  const [targetDate, setTargetDate] = useState(() => new Date().toISOString().split('T')[0]);
+  const [targetDate, setTargetDate] = useState(() => formatLocalYYYYMMDD(new Date()));
   const [filterRoom, setFilterRoom] = useState('');
   const [filterStatus, setFilterStatus] = useState('');
   const [filterOrganizer, setFilterOrganizer] = useState('');
@@ -374,7 +418,7 @@ export const Bookings: React.FC = () => {
   const updateBookingMutation = useMutation({
     mutationFn: async (data: EditBookingFormValues) => {
       const hasRoomChanged = Number(data.roomId) !== Number(selectedBooking.roomId);
-      const hasTimeChanged = data.start !== selectedBooking.startTime?.substring(0, 16) || data.end !== selectedBooking.endTime?.substring(0, 16);
+      const hasTimeChanged = !isSameTime(data.start, selectedBooking.startTime) || !isSameTime(data.end, selectedBooking.endTime);
 
       const payload: {
         title: string;
@@ -568,7 +612,7 @@ export const Bookings: React.FC = () => {
   };
 
   const changeTargetDate = (direction: 1 | -1) => {
-    const current = new Date(targetDate);
+    const current = parseLocalYYYYMMDD(targetDate);
     if (calendarViewType === 'DAY') {
       current.setDate(current.getDate() + direction);
     } else if (calendarViewType === 'WEEK') {
@@ -577,7 +621,7 @@ export const Bookings: React.FC = () => {
       // MONTH: shift by 1 month
       current.setMonth(current.getMonth() + direction);
     }
-    setTargetDate(current.toISOString().split('T')[0]);
+    setTargetDate(formatLocalYYYYMMDD(current));
   };
 
   const getStatusLabel = (status: string) => {
@@ -944,7 +988,7 @@ export const Bookings: React.FC = () => {
   );
 
   const renderMonthCalendar = () => {
-    const current = new Date(targetDate);
+    const current = parseLocalYYYYMMDD(targetDate);
     const year = current.getFullYear();
     const month = current.getMonth();
 
@@ -959,29 +1003,27 @@ export const Bookings: React.FC = () => {
     for (let i = startOffset - 1; i >= 0; i--) {
       const dayNum = prevMonthDays - i;
       const prevDate = new Date(year, month - 1, dayNum);
-      calendarCells.push({ date: prevDate, dayNumber: dayNum, isCurrentMonth: false, dateString: prevDate.toISOString().split('T')[0] });
+      calendarCells.push({ date: prevDate, dayNumber: dayNum, isCurrentMonth: false, dateString: formatLocalYYYYMMDD(prevDate) });
     }
 
     for (let i = 1; i <= daysInMonth; i++) {
       const currDate = new Date(year, month, i);
-      calendarCells.push({ date: currDate, dayNumber: i, isCurrentMonth: true, dateString: currDate.toISOString().split('T')[0] });
+      calendarCells.push({ date: currDate, dayNumber: i, isCurrentMonth: true, dateString: formatLocalYYYYMMDD(currDate) });
     }
 
     const remaining = 42 - calendarCells.length;
     for (let i = 1; i <= remaining; i++) {
       const nextDate = new Date(year, month + 1, i);
-      calendarCells.push({ date: nextDate, dayNumber: i, isCurrentMonth: false, dateString: nextDate.toISOString().split('T')[0] });
+      calendarCells.push({ date: nextDate, dayNumber: i, isCurrentMonth: false, dateString: formatLocalYYYYMMDD(nextDate) });
     }
 
     const weekdays = ['T2', 'T3', 'T4', 'T5', 'T6', 'T7', 'CN'];
-    const todayStr = new Date().toISOString().split('T')[0];
+    const todayStr = formatLocalYYYYMMDD(new Date());
 
     // Pre-build a date→bookings map for all bookings in this month view
     const bookingsByDate: Record<string, any[]> = {};
     (bookings || []).forEach((b: any) => {
-      if (!b.startTime) return;
-      // Support both "2026-06-28T..." and "2026-06-28 ..." formats
-      const ds = typeof b.startTime === 'string' ? b.startTime.substring(0, 10) : '';
+      const ds = getLocalDateStr(b.startTime);
       if (!ds) return;
       if (!bookingsByDate[ds]) bookingsByDate[ds] = [];
       bookingsByDate[ds].push(b);
@@ -1075,7 +1117,7 @@ export const Bookings: React.FC = () => {
   };
 
   const renderWeekCalendar = () => {
-    const current = new Date(targetDate);
+    const current = parseLocalYYYYMMDD(targetDate);
     const dayOfWeek = current.getDay();
     const startOffset = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
 
@@ -1088,7 +1130,7 @@ export const Bookings: React.FC = () => {
       day.setDate(monday.getDate() + i);
       weekDays.push({
         date: day,
-        dateString: day.toISOString().split('T')[0],
+        dateString: formatLocalYYYYMMDD(day),
         label: ['T2', 'T3', 'T4', 'T5', 'T6', 'T7', 'CN'][i],
         dayNum: day.getDate(),
       });
@@ -1097,14 +1139,13 @@ export const Bookings: React.FC = () => {
     // Pre-build booking map for the week
     const bookingsByDate: Record<string, any[]> = {};
     (bookings || []).forEach((b: any) => {
-      if (!b.startTime) return;
-      const ds = typeof b.startTime === 'string' ? b.startTime.substring(0, 10) : '';
+      const ds = getLocalDateStr(b.startTime);
       if (!ds) return;
       if (!bookingsByDate[ds]) bookingsByDate[ds] = [];
       bookingsByDate[ds].push(b);
     });
 
-    const todayStr = new Date().toISOString().split('T')[0];
+    const todayStr = formatLocalYYYYMMDD(new Date());
     const sunday = weekDays[6].date;
 
     // Week range label: "23/06 – 29/06/2026"
@@ -1235,7 +1276,7 @@ export const Bookings: React.FC = () => {
 
   const renderDayCalendar = () => {
     const dayBookings = (bookings || [])
-      .filter((b: any) => b.startTime && typeof b.startTime === 'string' && b.startTime.substring(0, 10) === targetDate)
+      .filter((b: any) => b.startTime && getLocalDateStr(b.startTime) === targetDate)
       .sort((a: any, b: any) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime());
 
     // Time slots: 00:00 → 24:00 in 2-hour blocks
@@ -1257,9 +1298,9 @@ export const Bookings: React.FC = () => {
       });
     };
 
-    const displayDate = new Date(targetDate + 'T12:00:00');
+    const displayDate = parseLocalYYYYMMDD(targetDate);
     const dateLabel = displayDate.toLocaleDateString('vi-VN', { weekday: 'long', day: '2-digit', month: '2-digit', year: 'numeric' });
-    const todayStr = new Date().toISOString().split('T')[0];
+    const todayStr = formatLocalYYYYMMDD(new Date());
     const isToday = targetDate === todayStr;
     const nowH = new Date().getHours() + new Date().getMinutes() / 60;
 
@@ -1478,19 +1519,19 @@ export const Bookings: React.FC = () => {
                       letterSpacing: '0.02em',
                       userSelect: 'none',
                     }}>
-                      {String(new Date(targetDate).getMonth() + 1).padStart(2, '0')}/{new Date(targetDate).getFullYear()}
+                      {String(parseLocalYYYYMMDD(targetDate).getMonth() + 1).padStart(2, '0')}/{parseLocalYYYYMMDD(targetDate).getFullYear()}
                     </span>
                     <input
                       type="month"
                       style={{
                         position: 'absolute', inset: 0, opacity: 0, cursor: 'pointer', width: '100%', height: '100%',
                       }}
-                      value={`${new Date(targetDate).getFullYear()}-${String(new Date(targetDate).getMonth() + 1).padStart(2, '0')}`}
+                      value={`${parseLocalYYYYMMDD(targetDate).getFullYear()}-${String(parseLocalYYYYMMDD(targetDate).getMonth() + 1).padStart(2, '0')}`}
                       onChange={(e) => {
                         if (e.target.value) {
                           const [y, m] = e.target.value.split('-');
                           const newDate = new Date(Number(y), Number(m) - 1, 1);
-                          setTargetDate(newDate.toISOString().split('T')[0]);
+                          setTargetDate(formatLocalYYYYMMDD(newDate));
                         }
                       }}
                     />
@@ -2247,8 +2288,8 @@ export const Bookings: React.FC = () => {
                                 title: selectedBooking.title,
                                 description: selectedBooking.description || '',
                                 roomId: selectedBooking.roomId,
-                                start: selectedBooking.startTime ? selectedBooking.startTime.substring(0, 16) : '',
-                                end: selectedBooking.endTime ? selectedBooking.endTime.substring(0, 16) : '',
+                                start: formatDateTimeLocal(selectedBooking.startTime),
+                                end: formatDateTimeLocal(selectedBooking.endTime),
                                 attendee: selectedBooking.attendee
                               });
                             }}

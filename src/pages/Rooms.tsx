@@ -153,7 +153,7 @@ export const Rooms: React.FC = () => {
         const response = await apiClient.request({
           url: '/room/not-overlap',
           method: 'GET',
-          data: { start: startTime, end: endTime }
+          params: { start: startTime, end: endTime }
         });
         return response.data?.data?.content || [];
       }
