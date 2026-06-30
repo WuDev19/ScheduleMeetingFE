@@ -22,7 +22,8 @@ import {
   XCircle,
   FileSpreadsheet,
   Package,
-  ArrowRight
+  ArrowRight,
+  CheckCircle
 } from 'lucide-react';
 
 // Helper to format date string to "yyyy-MM-dd HH:mm:ssXXX"
@@ -289,7 +290,7 @@ export const Bookings: React.FC = () => {
 
   useEffect(() => {
     if (isBookingDetailError && bookingIdQuery) {
-      showToast('Bạn không có quyền xem lịch họp này hoặc lịch họp không tồn tại.', 'error');
+      showToast('Bạn không có quyền xem lịch họp này.', 'error');
       setSearchParams({});
     }
   }, [isBookingDetailError]);
@@ -359,6 +360,23 @@ export const Bookings: React.FC = () => {
     },
     onError: (err: any) => {
       const msg = err.response?.data?.message || 'Không thể hủy lịch họp';
+      showToast(msg, 'error');
+    }
+  });
+
+  // COMPLETE BOOKING MUTATION
+  const completeBookingMutation = useMutation({
+    mutationFn: async (id: number) => {
+      await apiClient.patch(`/booking/${id}`, { isCompleted: true });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['bookings'] });
+      showToast('Đã xác nhận hoàn thành cuộc họp', 'success');
+      setActiveModal(null);
+      setSearchParams({});
+    },
+    onError: (err: any) => {
+      const msg = err.response?.data?.message || 'Không thể xác nhận hoàn thành cuộc họp';
       showToast(msg, 'error');
     }
   });
@@ -438,20 +456,6 @@ export const Bookings: React.FC = () => {
     onError: (err: any) => {
       const msg = err.response?.data?.message || 'Có lỗi xảy ra khi từ chối';
       showToast(msg, 'error');
-    }
-  });
-
-  // CONFIRM ATTENDANCE MUTATION
-  const confirmAttendanceMutation = useMutation({
-    mutationFn: async (id: number) => {
-      await apiClient.post(`/booking/${id}/attendee/confirm`);
-    },
-    onSuccess: () => {
-      showToast('Đã xác nhận tham gia thành công', 'success');
-      queryClient.invalidateQueries({ queryKey: ['bookings'] });
-    },
-    onError: () => {
-      showToast('Xác nhận tham gia thất bại hoặc bạn đã phản hồi trước đó', 'error');
     }
   });
 
@@ -1841,9 +1845,21 @@ export const Bookings: React.FC = () => {
                     {selectedBooking.description || 'Không có mô tả chi tiết cho cuộc họp này.'}
                   </p>
                 </div>
-                <span className={`badge badge-${selectedBooking.status?.toLowerCase() || 'pending'}`}>
-                  {getStatusLabel(selectedBooking.status)}
-                </span>
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '0.4rem' }}>
+                  <span className={`badge badge-${selectedBooking.status?.toLowerCase() || 'pending'}`}>
+                    {getStatusLabel(selectedBooking.status)}
+                  </span>
+                  {selectedBooking.isCompleted && (
+                    <span style={{
+                      fontSize: '0.72rem', fontWeight: 700,
+                      padding: '2px 8px', borderRadius: '4px',
+                      backgroundColor: 'rgba(16,185,129,0.12)', color: 'var(--success)',
+                      display: 'flex', alignItems: 'center', gap: '4px'
+                    }}>
+                      <CheckCircle size={12} /> Đã hoàn thành
+                    </span>
+                  )}
+                </div>
               </div>
 
               {/* Metadata Info Panel */}
@@ -1917,86 +1933,130 @@ export const Bookings: React.FC = () => {
               )}
             </div>
 
-            <div className="modal-footer">
-              <button type="button" className="btn btn-secondary" onClick={() => {
-                closeDetailModal();
-                setShowCancelConfirm(false);
-                setCancelReason('');
-              }}>Đóng</button>
+            <div className="modal-footer" style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
 
-              {/* Confirm attendance button */}
-              {selectedBooking.status === 'APPROVED' && !showCancelConfirm && (
-                <button
-                  type="button"
-                  className="btn"
-                  style={{ backgroundColor: 'var(--info)', color: '#fff' }}
-                  onClick={() => confirmAttendanceMutation.mutate(selectedBooking.id)}
-                >
-                  Xác nhận tham gia
-                </button>
-              )}
-
-              {/* Add equipment button - only for booking owner (not approver) when APPROVED */}
-              {(selectedBooking.status === 'APPROVED' || selectedBooking.status === 'PENDING') && !isApprover && !showCancelConfirm && (
-                <button
-                  type="button"
-                  className="btn"
-                  style={{
-                    backgroundColor: 'rgba(245, 158, 11, 0.15)',
-                    color: 'var(--warning)',
-                    border: '1px solid rgba(245, 158, 11, 0.4)',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '6px'
-                  }}
-                  onClick={() => {
-                    setAddEquipRows([{ equipmentId: parseInt(String(equipments?.[0]?.equipmentId || 1), 10), quantity: 1, action: 'ADD' }]);
-                    setActiveModal('add-equipment');
-                  }}
-                >
-                  <Package size={15} />
-                  Bổ sung thiết bị
-                </button>
-              )}
-
-              {/* Cancel booking - only for booking owner (not approver), requires reason */}
-              {(selectedBooking.status === 'PENDING' || selectedBooking.status === 'APPROVED') && !isApprover && (
+              {showCancelConfirm ? (
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem' }}>
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    style={{ padding: '0.55rem 1.1rem', fontSize: '0.85rem', fontWeight: 600, width: '100%' }}
+                    onClick={() => { setShowCancelConfirm(false); setCancelReason(''); }}
+                  >
+                    Quay lại
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-danger"
+                    style={{ padding: '0.55rem 1.1rem', fontSize: '0.85rem', fontWeight: 600, width: '100%' }}
+                    disabled={cancelBookingMutation.isPending}
+                    onClick={() => {
+                      if (!cancelReason.trim()) {
+                        showToast('Vui lòng nhập lý do hủy lịch', 'error');
+                        return;
+                      }
+                      cancelBookingMutation.mutate({ id: selectedBooking.id, reason: cancelReason.trim() });
+                      setShowCancelConfirm(false);
+                      setCancelReason('');
+                    }}
+                  >
+                    {cancelBookingMutation.isPending ? 'Đang hủy...' : 'Xác nhận hủy'}
+                  </button>
+                </div>
+              ) : (
                 <>
-                  {!showCancelConfirm ? (
+                  {/* Row 1: secondary actions, equal-width columns so they line up with row 2 */}
+                  {(() => {
+                    const showComplete = selectedBooking.status === 'APPROVED' && !selectedBooking.isCompleted && !isApprover;
+                    const showAddEquip = (selectedBooking.status === 'APPROVED' || selectedBooking.status === 'PENDING') && !isApprover;
+                    if (!showComplete && !showAddEquip) return null;
+                    return (
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem' }}>
+                        {showComplete && (
+                          <button
+                            type="button"
+                            className="btn"
+                            style={{
+                              padding: '0.55rem 1.1rem',
+                              fontSize: '0.85rem',
+                              fontWeight: 600,
+                              width: '100%',
+                              backgroundColor: 'rgba(16, 185, 129, 0.15)',
+                              color: 'var(--success)',
+                              border: '1px solid rgba(16, 185, 129, 0.4)',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              gap: '6px',
+                              whiteSpace: 'nowrap'
+                            }}
+                            disabled={completeBookingMutation.isPending}
+                            onClick={() => completeBookingMutation.mutate(selectedBooking.id)}
+                          >
+                            <CheckCircle size={15} />
+                            {completeBookingMutation.isPending ? 'Đang xác nhận...' : 'Xác nhận hoàn thành'}
+                          </button>
+                        )}
+                        {showAddEquip && (
+                          <button
+                            type="button"
+                            className="btn"
+                            style={{
+                              padding: '0.55rem 1.1rem',
+                              fontSize: '0.85rem',
+                              fontWeight: 600,
+                              width: '100%',
+                              gridColumn: showComplete ? undefined : '1 / -1',
+                              backgroundColor: 'rgba(245, 158, 11, 0.15)',
+                              color: 'var(--warning)',
+                              border: '1px solid rgba(245, 158, 11, 0.4)',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              gap: '6px',
+                              whiteSpace: 'nowrap'
+                            }}
+                            onClick={() => {
+                              setAddEquipRows([{ equipmentId: parseInt(String(equipments?.[0]?.equipmentId || 1), 10), quantity: 1, action: 'ADD' }]);
+                              setActiveModal('add-equipment');
+                            }}
+                          >
+                            <Package size={15} />
+                            Bổ sung thiết bị
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })()}
+
+                  {/* Row 2: Đóng and Hủy lịch đặt - same equal-width grid as row 1 */}
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem' }}>
                     <button
                       type="button"
-                      className="btn btn-danger"
-                      onClick={() => setShowCancelConfirm(true)}
+                      className="btn btn-secondary"
+                      style={{
+                        padding: '0.55rem 1.1rem', fontSize: '0.85rem', fontWeight: 600, width: '100%',
+                        gridColumn: ((selectedBooking.status === 'PENDING' || selectedBooking.status === 'APPROVED') && !isApprover) ? undefined : '1 / -1'
+                      }}
+                      onClick={() => {
+                        closeDetailModal();
+                        setShowCancelConfirm(false);
+                        setCancelReason('');
+                      }}
                     >
-                      Hủy lịch đặt
+                      Đóng
                     </button>
-                  ) : (
-                    <>
-                      <button
-                        type="button"
-                        className="btn btn-secondary"
-                        onClick={() => { setShowCancelConfirm(false); setCancelReason(''); }}
-                      >
-                        Quay lại
-                      </button>
+                    {(selectedBooking.status === 'PENDING' || selectedBooking.status === 'APPROVED') && !isApprover && (
                       <button
                         type="button"
                         className="btn btn-danger"
-                        disabled={cancelBookingMutation.isPending}
-                        onClick={() => {
-                          if (!cancelReason.trim()) {
-                            showToast('Vui lòng nhập lý do hủy lịch', 'error');
-                            return;
-                          }
-                          cancelBookingMutation.mutate({ id: selectedBooking.id, reason: cancelReason.trim() });
-                          setShowCancelConfirm(false);
-                          setCancelReason('');
-                        }}
+                        style={{ padding: '0.55rem 1.1rem', fontSize: '0.85rem', fontWeight: 600, width: '100%' }}
+                        onClick={() => setShowCancelConfirm(true)}
                       >
-                        {cancelBookingMutation.isPending ? 'Đang hủy...' : 'Xác nhận hủy'}
+                        Hủy lịch đặt
                       </button>
-                    </>
-                  )}
+                    )}
+                  </div>
                 </>
               )}
             </div>
@@ -2144,15 +2204,17 @@ export const Bookings: React.FC = () => {
                         </select>
 
                         {/* Quantity input */}
-                        <input
-                          type="number"
-                          className="form-control"
-                          style={{ width: '72px', flexShrink: 0, fontSize: '0.8rem', padding: '0.35rem 0.5rem' }}
-                          placeholder="SL"
-                          min={1}
-                          value={row.quantity}
-                          onChange={e => setAddEquipRows(prev => prev.map((r, i) => i === idx ? { ...r, quantity: Math.max(1, Number(e.target.value)) } : r))}
-                        />
+                        {row.action !== 'DELETE' && (
+                          <input
+                            type="number"
+                            className="form-control"
+                            style={{ width: '72px', flexShrink: 0, fontSize: '0.8rem', padding: '0.35rem 0.5rem' }}
+                            placeholder="SL"
+                            min={1}
+                            value={row.quantity}
+                            onChange={e => setAddEquipRows(prev => prev.map((r, i) => i === idx ? { ...r, quantity: Math.max(1, Number(e.target.value)) } : r))}
+                          />
+                        )}
 
                         <button
                           type="button"
