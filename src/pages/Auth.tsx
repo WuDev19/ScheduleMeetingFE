@@ -7,7 +7,7 @@ import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 import { apiClient } from '../api/client';
 import { AuthLayout } from '../layouts/AuthLayout';
-import { KeyRound, Mail, User as UserIcon, Phone, UserCheck, Eye, EyeOff } from 'lucide-react';
+import { KeyRound, Mail, User as UserIcon, Phone, Eye, EyeOff } from 'lucide-react';
 
 // Form validation schemas
 const loginSchema = z.object({
@@ -22,7 +22,7 @@ const signUpSchema = z.object({
   phone: z.string().regex(/^(03|05|07|08|09)\d{8}$/, 'Số điện thoại gồm 10 chữ số hợp lệ'),
   password: z.string().regex(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}$/, 'Mật khẩu phải chứa chữ hoa, chữ thường, số và ký tự đặc biệt'),
   passwordConfirm: z.string(),
-  role: z.string().default('REGISTER'),
+  role: z.string(),
 }).refine((data) => data.password === data.passwordConfirm, {
   message: "Mật khẩu xác nhận không trùng khớp",
   path: ["passwordConfirm"],

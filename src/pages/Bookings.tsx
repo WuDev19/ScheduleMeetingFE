@@ -20,7 +20,8 @@ import {
   UserCheck,
   Mail,
   XCircle,
-  FileSpreadsheet
+  FileSpreadsheet,
+  Package
 } from 'lucide-react';
 
 // Helper to format date string to "yyyy-MM-dd HH:mm:ssXXX"
@@ -94,10 +95,13 @@ export const Bookings: React.FC = () => {
   const [activeSubTab, setActiveSubTab] = useState<'scheduler' | 'approvals'>('scheduler');
 
   // Modals state
-  const [activeModal, setActiveModal] = useState<'create' | 'detail' | 'edit' | 'approval-detail' | null>(null);
+  const [activeModal, setActiveModal] = useState<'create' | 'detail' | 'edit' | 'approval-detail' | 'add-equipment' | null>(null);
+  const [addEquipRows, setAddEquipRows] = useState<{ equipmentId: number; quantity: number; action: 'ADD' | 'DELETE' }[]>([]);
   const [selectedBooking, setSelectedBooking] = useState<any>(null);
   const [selectedHistory, setSelectedHistory] = useState<any>(null);
   const [notes, setNotes] = useState('');
+  const [cancelReason, setCancelReason] = useState('');
+  const [showCancelConfirm, setShowCancelConfirm] = useState(false);
 
   // Fetch pending approvals for Approver
   const { data: pendingApprovals, isLoading: isPendingApprovalsLoading } = useQuery({
@@ -126,31 +130,6 @@ export const Bookings: React.FC = () => {
       return response.data?.data?.content || [];
     }
   });
-
-  // Helper: compute [startDate, endDate] for calendar view based on viewType + targetDate
-  const getCalendarDateRange = (viewType: 'DAY' | 'WEEK' | 'MONTH', date: string): { startDate: string; endDate: string } => {
-    const pad = (n: number) => String(n).padStart(2, '0');
-    const toStr = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-
-    if (viewType === 'DAY') {
-      return { startDate: date, endDate: date };
-    } else if (viewType === 'WEEK') {
-      const cur = new Date(date);
-      const dow = cur.getDay();
-      const offset = dow === 0 ? 6 : dow - 1; // Monday-first
-      const monday = new Date(cur);
-      monday.setDate(cur.getDate() - offset);
-      const sunday = new Date(monday);
-      sunday.setDate(monday.getDate() + 6);
-      return { startDate: toStr(monday), endDate: toStr(sunday) };
-    } else {
-      // MONTH
-      const cur = new Date(date);
-      const first = new Date(cur.getFullYear(), cur.getMonth(), 1);
-      const last = new Date(cur.getFullYear(), cur.getMonth() + 1, 0);
-      return { startDate: toStr(first), endDate: toStr(last) };
-    }
-  };
 
   // 3. Fetch Bookings list
   const { data: bookings, isLoading: isBookingsLoading } = useQuery({
@@ -237,7 +216,6 @@ export const Bookings: React.FC = () => {
 
       const payload = {
         roomId: data.roomId,
-        userId: user?.id || 1,
         title: data.title,
         description: data.description || '',
         start: startDateTime,
@@ -279,6 +257,28 @@ export const Bookings: React.FC = () => {
   });
 
 
+
+  // ADD EQUIPMENT MUTATION
+  const addEquipmentMutation = useMutation({
+    mutationFn: async ({ bookingId, rows }: { bookingId: number; rows: { equipmentId: number; quantity: number; action: string }[] }) => {
+      const payload = rows.map(r => ({
+        equipmentId: parseInt(String(r.equipmentId), 10),
+        quantity: r.action === 'DELETE' ? 1 : parseInt(String(r.quantity), 10),
+        action: r.action
+      }));
+      await apiClient.post(`/booking/${bookingId}/equipment`, payload);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['bookings'] });
+      showToast('Đã gửi yêu cầu bổ sung thiết bị thành công, chờ approver duyệt', 'success');
+      setActiveModal(null);
+      setAddEquipRows([]);
+    },
+    onError: (err: any) => {
+      const msg = err.response?.data?.message || 'Có lỗi xảy ra khi gửi yêu cầu bổ sung thiết bị';
+      showToast(msg, 'error');
+    }
+  });
 
   // APPROVE BOOKING MUTATION
   const approveMutation = useMutation({
@@ -362,6 +362,8 @@ export const Bookings: React.FC = () => {
   const closeDetailModal = () => {
     setActiveModal(null);
     setSearchParams({});
+    setShowCancelConfirm(false);
+    setCancelReason('');
   };
 
   const changeTargetDate = (direction: 1 | -1) => {
@@ -1650,7 +1652,7 @@ export const Bookings: React.FC = () => {
                         {...register(`equipments.${index}.equipmentId` as const)}
                       >
                         {equipments?.map((eq: any) => (
-                          <option key={eq.id} value={eq.id}>{eq.equipmentName}</option>
+                          <option key={String(eq.equipmentId)} value={String(eq.equipmentId)}>{eq.equipmentName}</option>
                         ))}
                       </select>
 
@@ -1762,27 +1764,33 @@ export const Bookings: React.FC = () => {
                 </div>
               )}
 
-              {/* Reject / Cancel inputs if status permits */}
-              {selectedBooking.status === 'PENDING' && (
+              {/* Cancel reason input - only for booking owner, shown when they click "Hủy lịch đặt" */}
+              {(selectedBooking.status === 'PENDING' || selectedBooking.status === 'APPROVED') && !isApprover && showCancelConfirm && (
                 <div style={{ borderTop: '1px solid var(--border-light)', paddingTop: '1rem' }}>
-                  <label className="form-label" htmlFor="detail-notes">Ý kiến đóng góp / Lý do từ chối (bắt buộc khi từ chối)</label>
+                  <label className="form-label" htmlFor="cancel-reason">
+                    Lý do hủy lịch <span style={{ color: 'var(--danger)' }}>*</span>
+                  </label>
                   <textarea
-                    id="detail-notes"
+                    id="cancel-reason"
                     className="form-control"
-                    placeholder="Nhập ghi chú ý kiến tại đây..."
-                    value={notes}
-                    onChange={(e) => setNotes(e.target.value)}
-                    style={{ minHeight: '60px', width: '100%' }}
+                    placeholder="Vui lòng nhập lý do hủy lịch họp này..."
+                    value={cancelReason}
+                    onChange={(e) => setCancelReason(e.target.value)}
+                    style={{ minHeight: '70px', width: '100%', resize: 'vertical' }}
                   />
                 </div>
               )}
             </div>
 
             <div className="modal-footer">
-              <button type="button" className="btn btn-secondary" onClick={closeDetailModal}>Đóng</button>
+              <button type="button" className="btn btn-secondary" onClick={() => {
+                closeDetailModal();
+                setShowCancelConfirm(false);
+                setCancelReason('');
+              }}>Đóng</button>
 
               {/* Confirm attendance button */}
-              {selectedBooking.status === 'APPROVED' && (
+              {selectedBooking.status === 'APPROVED' && !showCancelConfirm && (
                 <button
                   type="button"
                   className="btn"
@@ -1793,43 +1801,276 @@ export const Bookings: React.FC = () => {
                 </button>
               )}
 
-              {/* Actions for Approvers */}
-              {isApprover && selectedBooking.status === 'PENDING' && (
-                <>
-                  <button
-                    type="button"
-                    className="btn btn-danger"
-                    onClick={() => {
-                      if (!notes) {
-                        showToast('Vui lòng nhập lý do từ chối vào ô ghi chú', 'error');
-                        return;
-                      }
-                      rejectMutation.mutate({ id: selectedBooking.id, note: notes });
-                    }}
-                  >
-                    Từ chối
-                  </button>
-                  <button
-                    type="button"
-                    className="btn"
-                    style={{ backgroundColor: 'var(--success)', color: '#fff' }}
-                    onClick={() => approveMutation.mutate({ id: selectedBooking.id, note: notes })}
-                  >
-                    Phê duyệt
-                  </button>
-                </>
-              )}
-
-              {/* Actions for Booking owner */}
-              {selectedBooking.status === 'PENDING' && !isApprover && (
+              {/* Add equipment button - only for booking owner (not approver) when APPROVED */}
+              {(selectedBooking.status === 'APPROVED' || selectedBooking.status === 'PENDING') && !isApprover && !showCancelConfirm && (
                 <button
                   type="button"
-                  className="btn btn-danger"
-                  onClick={() => cancelBookingMutation.mutate({ id: selectedBooking.id, reason: 'Người dùng hủy đặt' })}
+                  className="btn"
+                  style={{
+                    backgroundColor: 'rgba(245, 158, 11, 0.15)',
+                    color: 'var(--warning)',
+                    border: '1px solid rgba(245, 158, 11, 0.4)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px'
+                  }}
+                  onClick={() => {
+                    setAddEquipRows([{ equipmentId: parseInt(String(equipments?.[0]?.equipmentId || 1), 10), quantity: 1, action: 'ADD' }]);
+                    setActiveModal('add-equipment');
+                  }}
                 >
-                  Hủy lịch đặt
+                  <Package size={15} />
+                  Bổ sung thiết bị
                 </button>
               )}
+
+              {/* Cancel booking - only for booking owner (not approver), requires reason */}
+              {(selectedBooking.status === 'PENDING' || selectedBooking.status === 'APPROVED') && !isApprover && (
+                <>
+                  {!showCancelConfirm ? (
+                    <button
+                      type="button"
+                      className="btn btn-danger"
+                      onClick={() => setShowCancelConfirm(true)}
+                    >
+                      Hủy lịch đặt
+                    </button>
+                  ) : (
+                    <>
+                      <button
+                        type="button"
+                        className="btn btn-secondary"
+                        onClick={() => { setShowCancelConfirm(false); setCancelReason(''); }}
+                      >
+                        Quay lại
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-danger"
+                        disabled={cancelBookingMutation.isPending}
+                        onClick={() => {
+                          if (!cancelReason.trim()) {
+                            showToast('Vui lòng nhập lý do hủy lịch', 'error');
+                            return;
+                          }
+                          cancelBookingMutation.mutate({ id: selectedBooking.id, reason: cancelReason.trim() });
+                          setShowCancelConfirm(false);
+                          setCancelReason('');
+                        }}
+                      >
+                        {cancelBookingMutation.isPending ? 'Đang hủy...' : 'Xác nhận hủy'}
+                      </button>
+                    </>
+                  )}
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ADD EQUIPMENT MODAL */}
+      {activeModal === 'add-equipment' && selectedBooking && (
+        <div className="modal-overlay">
+          <div className="modal-content" style={{ maxWidth: '560px' }}>
+            <div className="modal-header">
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+                <span style={{
+                  width: '32px', height: '32px', borderRadius: '8px',
+                  backgroundColor: 'rgba(245, 158, 11, 0.15)',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center'
+                }}>
+                  <Package size={16} style={{ color: 'var(--warning)' }} />
+                </span>
+                <div>
+                  <h3 style={{ margin: 0, fontSize: '1.1rem' }}>Yêu cầu bổ sung thiết bị</h3>
+                  <p style={{ margin: 0, fontSize: '0.78rem', color: 'var(--text-tertiary)' }}>
+                    {selectedBooking.title}
+                  </p>
+                </div>
+              </div>
+              <button type="button" className="btn btn-ghost" style={{ padding: '4px', minWidth: 'auto' }}
+                onClick={() => { setActiveModal('detail'); setAddEquipRows([]); }}>
+                <XCircle size={20} />
+              </button>
+            </div>
+
+            <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+
+              {/* Current equipment list */}
+              {selectedBooking.equipments && selectedBooking.equipments.length > 0 && (
+                <div>
+                  <h4 style={{ fontSize: '0.85rem', fontWeight: 700, color: 'var(--text-secondary)', margin: '0 0 0.6rem 0', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                    Thiết bị hiện tại của cuộc họp
+                  </h4>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+                    {selectedBooking.equipments.map((eq: any, idx: number) => (
+                      <div key={idx} style={{
+                        display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                        padding: '0.5rem 0.75rem',
+                        backgroundColor: 'var(--bg-tertiary)',
+                        borderRadius: 'var(--radius-sm)',
+                        border: '1px solid var(--border-light)',
+                        fontSize: '0.85rem'
+                      }}>
+                        <span style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                          <Package size={13} style={{ color: 'var(--text-tertiary)' }} />
+                          {eq.equipmentName}
+                        </span>
+                        <span style={{
+                          backgroundColor: 'rgba(99,102,241,0.12)',
+                          color: 'var(--accent)',
+                          fontWeight: 700, fontSize: '0.78rem',
+                          padding: '2px 8px', borderRadius: '4px'
+                        }}>x{eq.usingQuantity || eq.quantity}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* New equipment rows to add */}
+              <div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
+                  <h4 style={{ fontSize: '0.85rem', fontWeight: 700, color: 'var(--text-secondary)', margin: 0, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                    Thiết bị yêu cầu bổ sung
+                  </h4>
+                  <button
+                    type="button"
+                    className="btn btn-ghost"
+                    style={{ fontSize: '0.75rem', padding: '4px 10px', color: 'var(--accent)', border: '1px dashed var(--accent)', borderRadius: 'var(--radius-sm)' }}
+                    onClick={() => setAddEquipRows(prev => [...prev, { equipmentId: parseInt(String(equipments?.[0]?.equipmentId || 1), 10), quantity: 1, action: 'ADD' }])}
+                  >
+                    <Plus size={13} /> Thêm dòng
+                  </button>
+                </div>
+
+                {addEquipRows.length === 0 ? (
+                  <div style={{
+                    padding: '1.5rem', textAlign: 'center', color: 'var(--text-tertiary)',
+                    fontSize: '0.85rem', fontStyle: 'italic',
+                    border: '2px dashed var(--border-light)', borderRadius: 'var(--radius-md)'
+                  }}>
+                    Nhấn "Thêm dòng" để bắt đầu yêu cầu bổ sung thiết bị
+                  </div>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                    {addEquipRows.map((row, idx) => (
+                      <div key={idx} style={{
+                        display: 'flex', gap: '0.5rem', alignItems: 'center',
+                        padding: '0.6rem 0.75rem',
+                        backgroundColor: row.action === 'DELETE' ? 'rgba(239,68,68,0.05)' : 'rgba(16,185,129,0.05)',
+                        borderRadius: 'var(--radius-sm)',
+                        border: row.action === 'DELETE' ? '1px solid rgba(239,68,68,0.2)' : '1px solid rgba(16,185,129,0.2)'
+                      }}>
+                        {/* Action select */}
+                        <select
+                          className="form-control"
+                          style={{ width: '90px', flexShrink: 0, fontSize: '0.8rem', padding: '0.35rem 0.5rem' }}
+                          value={row.action}
+                          onChange={e => {
+                            const newAction = e.target.value as 'ADD' | 'DELETE';
+                            let nextEquipmentId: number = parseInt(String(row.equipmentId), 10);
+                            if (newAction === 'DELETE') {
+                              const currentEquips = selectedBooking?.equipments || [];
+                              if (currentEquips.length > 0) {
+                                nextEquipmentId = parseInt(String(currentEquips[0].equipmentId), 10);
+                              }
+                            } else {
+                              if (equipments && equipments.length > 0) {
+                                nextEquipmentId = parseInt(String(equipments[0].equipmentId), 10);
+                              }
+                            }
+                            setAddEquipRows(prev => prev.map((r, i) => i === idx ? { ...r, action: newAction, equipmentId: nextEquipmentId } : r));
+                          }}
+                        >
+                          <option value="ADD">Thêm</option>
+                          {selectedBooking?.equipments && selectedBooking.equipments.length > 0 && (
+                            <option value="DELETE">Xóa</option>
+                          )}
+                        </select>
+
+                        {/* Equipment select */}
+                        <select
+                          className="form-control"
+                          style={{ flexGrow: 1, fontSize: '0.8rem', padding: '0.35rem 0.5rem' }}
+                          value={String(row.equipmentId)}
+                          onChange={e => setAddEquipRows(prev => prev.map((r, i) => i === idx ? { ...r, equipmentId: parseInt(e.target.value, 10) } : r))}
+                        >
+                          {row.action === 'DELETE' ? (
+                            (selectedBooking?.equipments || []).map((eq: any) => (
+                              <option key={String(eq.equipmentId)} value={String(eq.equipmentId)}>{eq.equipmentName} (x{eq.usingQuantity || eq.quantity})</option>
+                            ))
+                          ) : (
+                            equipments?.map((eq: any) => (
+                              <option key={String(eq.equipmentId)} value={String(eq.equipmentId)}>{eq.equipmentName}</option>
+                            ))
+                          )}
+                        </select>
+
+                        {/* Quantity input */}
+                        <input
+                          type="number"
+                          className="form-control"
+                          style={{ width: '72px', flexShrink: 0, fontSize: '0.8rem', padding: '0.35rem 0.5rem' }}
+                          placeholder="SL"
+                          min={1}
+                          value={row.quantity}
+                          onChange={e => setAddEquipRows(prev => prev.map((r, i) => i === idx ? { ...r, quantity: Math.max(1, Number(e.target.value)) } : r))}
+                        />
+
+                        <button
+                          type="button"
+                          className="btn btn-ghost"
+                          style={{ color: 'var(--danger)', padding: '6px', minWidth: 'auto', flexShrink: 0 }}
+                          onClick={() => setAddEquipRows(prev => prev.filter((_, i) => i !== idx))}
+                        >
+                          <X size={15} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Info note */}
+              <div style={{
+                padding: '0.75rem 1rem',
+                backgroundColor: 'rgba(245, 158, 11, 0.08)',
+                border: '1px solid rgba(245, 158, 11, 0.2)',
+                borderRadius: 'var(--radius-md)',
+                fontSize: '0.8rem',
+                color: 'var(--warning)',
+                display: 'flex',
+                alignItems: 'flex-start',
+                gap: '0.5rem'
+              }}>
+                <span style={{ flexShrink: 0, marginTop: '1px' }}>⚠️</span>
+                <span>Yêu cầu bổ sung thiết bị cần được approver phê duyệt trước khi có hiệu lực. Vui lòng chờ xác nhận.</span>
+              </div>
+            </div>
+
+            <div className="modal-footer">
+              <button type="button" className="btn btn-secondary"
+                onClick={() => { setActiveModal('detail'); setAddEquipRows([]); }}>
+                Quay lại
+              </button>
+              <button
+                type="button"
+                className="btn"
+                style={{ backgroundColor: 'var(--warning)', color: '#fff', display: 'flex', alignItems: 'center', gap: '6px' }}
+                disabled={addEquipRows.length === 0 || addEquipmentMutation.isPending}
+                onClick={() => {
+                  if (addEquipRows.length === 0) {
+                    showToast('Vui lòng thêm ít nhất một thiết bị', 'error');
+                    return;
+                  }
+                  addEquipmentMutation.mutate({ bookingId: selectedBooking.id, rows: addEquipRows });
+                }}
+              >
+                <Package size={15} />
+                {addEquipmentMutation.isPending ? 'Đang gửi...' : 'Gửi yêu cầu bổ sung'}
+              </button>
             </div>
           </div>
         </div>
@@ -1868,7 +2109,10 @@ export const Bookings: React.FC = () => {
               {/* Old vs New Side-by-Side Comparison Grid */}
               <div>
                 <h4 style={{ fontSize: '0.95rem', fontWeight: 700, color: 'var(--text-primary)', marginBottom: '0.75rem' }}>
-                  So sánh thay đổi chi tiết
+                  {selectedHistory.actionType === 'ADD_EQUIPMENT' || selectedHistory.actionType === 'UPDATE_EQUIP_QUANTITY'
+                    ? 'Thiết bị yêu cầu bổ sung'
+                    : 'So sánh thay đổi chi tiết'
+                  }
                 </h4>
 
                 {selectedHistory.actionType === 'CREATED' ? (
@@ -1892,8 +2136,145 @@ export const Bookings: React.FC = () => {
                     {renderSingleField('Thời gian kết thúc', selectedHistory.newData?.endTime || selectedHistory.endTime, formatFullDate)}
                     {renderSingleField('Số người tham gia', selectedHistory.newData?.attendeeCount || selectedHistory.attendee, (val) => val ? `${val} người` : '')}
                   </div>
+
+                ) : (selectedHistory.actionType === 'ADD_EQUIPMENT' || selectedHistory.actionType === 'UPDATE_EQUIP_QUANTITY') ? (
+                  /* ADD_EQUIPMENT: specialized layout showing only equipment requests */
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+
+                    {/* Context info — booking this applies to */}
+                    <div className="glass-card" style={{
+                      padding: '1rem',
+                      borderRadius: 'var(--radius-md)',
+                      backgroundColor: 'rgba(245, 158, 11, 0.04)',
+                      border: '1px solid rgba(245, 158, 11, 0.2)',
+                      display: 'flex', flexDirection: 'column', gap: '0.5rem'
+                    }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.82rem', color: 'var(--text-secondary)' }}>
+                        <Package size={14} style={{ color: 'var(--warning)', flexShrink: 0 }} />
+                        <span>Yêu cầu bổ sung thiết bị cho cuộc họp:</span>
+                        <strong style={{ color: 'var(--text-primary)' }}>{selectedHistory.title}</strong>
+                      </div>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '1rem', fontSize: '0.78rem', color: 'var(--text-tertiary)', paddingLeft: '1.4rem' }}>
+                        <span>📍 {selectedHistory.roomName}</span>
+                        <span>⏰ {formatTime(selectedHistory.startTime?.toString())} – {formatTime(selectedHistory.endTime?.toString())} ({new Date(selectedHistory.startTime?.toString()).toLocaleDateString('vi-VN')})</span>
+                        <span>👤 {selectedHistory.userBooked}</span>
+                      </div>
+                    </div>
+
+                    {/* Equipment changes — two columns side by side: Left is Old, Right is New */}
+                    {(() => {
+                      const newEquips: any[] = selectedHistory.newData?.equipments || [];
+                      const oldEquips: any[] = selectedHistory.oldData?.equipments || [];
+
+                      if (newEquips.length === 0 && oldEquips.length === 0) {
+                        return (
+                          <div style={{ padding: '1.5rem', textAlign: 'center', color: 'var(--text-tertiary)', fontStyle: 'italic', fontSize: '0.85rem' }}>
+                            Không có dữ liệu thiết bị
+                          </div>
+                        );
+                      }
+
+                      const allEquipIds = Array.from(new Set([
+                        ...newEquips.map((e: any) => e.equipmentId),
+                        ...oldEquips.map((e: any) => e.equipmentId)
+                      ])).filter(Boolean);
+
+                      const rows = allEquipIds.map((eqId: any) => {
+                        const newEq = newEquips.find((e: any) => e.equipmentId === eqId);
+                        const oldEq = oldEquips.find((e: any) => e.equipmentId === eqId);
+                        const eqName = newEq?.equipmentName || oldEq?.equipmentName || `Thiết bị #${eqId}`;
+                        const oldQty = oldEq?.usingQuantity ?? null;
+                        const newQty = newEq?.usingQuantity ?? null;
+                        const isNew = oldQty === null && newQty !== null;
+                        const isRemoved = newQty === null && oldQty !== null;
+                        const isChanged = !isNew && !isRemoved && oldQty !== newQty;
+                        return { eqId, eqName, oldQty, newQty, isNew, isRemoved, isChanged };
+                      });
+
+                      return (
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.25rem' }}>
+
+                          {/* Left Card: Old equipment list */}
+                          <div className="glass-card" style={{
+                            padding: '1.25rem',
+                            borderRadius: 'var(--radius-lg)',
+                            boxShadow: '0 8px 24px rgba(239, 68, 68, 0.08), 0 2px 6px rgba(0, 0, 0, 0.1)',
+                            border: '1px solid rgba(239, 68, 68, 0.25)',
+                            backgroundColor: 'rgba(239, 68, 68, 0.02)',
+                            display: 'flex', flexDirection: 'column', gap: '0.6rem'
+                          }}>
+                            <h5 style={{ margin: 0, fontSize: '1.05rem', fontWeight: 700, color: 'var(--danger)', borderBottom: '1px solid rgba(239, 68, 68, 0.15)', paddingBottom: '0.5rem' }}>
+                              Thiết bị Cũ (Hiện tại)
+                            </h5>
+                            {rows.filter(r => !r.isNew).length === 0 && (
+                              <span style={{ fontSize: '0.82rem', color: 'var(--text-tertiary)', fontStyle: 'italic', padding: '0.4rem 0.75rem' }}>
+                                Chưa có thiết bị nào
+                              </span>
+                            )}
+                            {rows.filter(({ isNew }) => !isNew).map(({ eqId, eqName, oldQty, isRemoved, isChanged }) => (
+                              <div key={eqId} style={{
+                                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                                padding: '0.6rem 0.75rem',
+                                borderRadius: 'var(--radius-sm)',
+                                backgroundColor: (isChanged || isRemoved) ? 'rgba(239, 68, 68, 0.08)' : 'rgba(255,255,255,0.01)',
+                                border: (isChanged || isRemoved) ? '1px solid rgba(239, 68, 68, 0.15)' : '1px solid transparent',
+                              }}>
+                                <span style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.875rem', color: 'var(--text-primary)' }}>
+                                  <Package size={14} style={{ flexShrink: 0 }} />
+                                  {eqName}
+                                </span>
+                                <span style={{
+                                  fontSize: '0.85rem', fontWeight: 600,
+                                  color: (isChanged || isRemoved) ? 'var(--danger)' : 'var(--text-secondary)',
+                                  textDecoration: (isChanged || isRemoved) ? 'line-through' : 'none'
+                                }}>
+                                  {`x${oldQty}`}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+
+                          {/* Right Card: New equipment list (requested) */}
+                          <div className="glass-card" style={{
+                            padding: '1.25rem',
+                            borderRadius: 'var(--radius-lg)',
+                            boxShadow: '0 12px 32px rgba(16, 185, 129, 0.12), 0 2px 10px rgba(0, 0, 0, 0.15)',
+                            border: '1px solid rgba(16, 185, 129, 0.25)',
+                            backgroundColor: 'rgba(16, 185, 129, 0.02)',
+                            display: 'flex', flexDirection: 'column', gap: '0.6rem'
+                          }}>
+                            <h5 style={{ margin: 0, fontSize: '1.05rem', fontWeight: 700, color: 'var(--success)', borderBottom: '1px solid rgba(16, 185, 129, 0.15)', paddingBottom: '0.5rem' }}>
+                              Thiết bị Mới (Yêu cầu duyệt)
+                            </h5>
+                            {rows.map(({ eqId, eqName, newQty, isNew, isRemoved, isChanged }) => (
+                              <div key={eqId} style={{
+                                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                                padding: '0.6rem 0.75rem',
+                                borderRadius: 'var(--radius-sm)',
+                                backgroundColor: (isChanged || isNew) ? 'rgba(16, 185, 129, 0.08)' : 'rgba(255,255,255,0.01)',
+                                border: (isChanged || isNew) ? '1px solid rgba(16, 185, 129, 0.15)' : '1px solid transparent',
+                              }}>
+                                <span style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.875rem', color: isRemoved ? 'var(--text-tertiary)' : 'var(--text-primary)' }}>
+                                  <Package size={14} style={{ flexShrink: 0, opacity: isRemoved ? 0.5 : 1 }} />
+                                  {eqName}
+                                </span>
+                                <span style={{
+                                  fontSize: '0.85rem', fontWeight: 700,
+                                  color: isRemoved ? 'var(--text-tertiary)' : ((isChanged || isNew) ? 'var(--success)' : 'var(--text-primary)')
+                                }}>
+                                  {isRemoved ? 'Đã xóa' : `x${newQty}`}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+
+                        </div>
+                      );
+                    })()}
+                  </div>
+
                 ) : (
-                  /* Two columns side by side: Left is Old, Right is New */
+                  /* UPDATED: Two columns side by side: Left is Old, Right is New */
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.25rem' }}>
 
                     {/* Left Card: Old Info (Reddish border, soft shadow) */}
