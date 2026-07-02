@@ -4,24 +4,22 @@ import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 import { apiClient } from '../api/client';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { 
-  Home, 
-  Calendar, 
-  DoorOpen, 
-  User, 
+import {
+  Home,
+  Calendar,
+  DoorOpen,
+  User,
   Users,
-  Bell, 
-  LogOut, 
-  Sun, 
-  Moon, 
-  Menu, 
-  Check, 
-  Trash2, 
+  Bell,
+  LogOut,
+  Sun,
+  Moon,
+  Menu,
+  Check,
+  Trash2,
   Building,
   X,
   Clock,
-  Phone,
-  Mail,
   CheckCircle,
   Eye
 } from 'lucide-react';
@@ -191,9 +189,9 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) =>
 
   return (
     <div className="dashboard-container" style={{ display: 'flex', minHeight: '100vh', width: '100vw' }}>
-      
+
       {/* SIDEBAR - Left panel */}
-      <aside 
+      <aside
         className={`glass-card ${isSidebarOpen ? 'sidebar-open' : ''}`}
         style={{
           width: '260px',
@@ -293,12 +291,12 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) =>
             </div>
           </div>
 
-          <button 
+          <button
             onClick={handleLogout}
             className="btn btn-ghost"
-            style={{ 
-              justifyContent: 'flex-start', 
-              color: 'var(--danger)', 
+            style={{
+              justifyContent: 'flex-start',
+              color: 'var(--danger)',
               backgroundColor: 'transparent',
               padding: '0.75rem 1rem',
               width: '100%'
@@ -320,8 +318,8 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) =>
 
       {/* SIDEBAR OVERLAY FOR MOBILE */}
       {isSidebarOpen && (
-        <div 
-          onClick={() => setIsSidebarOpen(false)} 
+        <div
+          onClick={() => setIsSidebarOpen(false)}
           style={{
             position: 'fixed',
             top: 0,
@@ -336,9 +334,9 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) =>
 
       {/* MAIN CONTAINER */}
       <div style={{ flexGrow: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
-        
+
         {/* HEADER */}
-        <header 
+        <header
           style={{
             height: '70px',
             backgroundColor: 'var(--bg-secondary)',
@@ -354,8 +352,8 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) =>
         >
           {/* Page Title / Left side */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-            <button 
-              className="mobile-burger-btn" 
+            <button
+              className="mobile-burger-btn"
               onClick={() => setIsSidebarOpen(true)}
               style={{
                 display: 'none',
@@ -373,7 +371,7 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) =>
           {/* Action buttons / Right side */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
             {/* Dark mode button */}
-            <button 
+            <button
               onClick={toggleTheme}
               className="btn btn-ghost"
               style={{ width: '40px', height: '40px', padding: 0, borderRadius: '50%' }}
@@ -384,7 +382,7 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) =>
 
             {/* Notification Badge */}
             <div style={{ position: 'relative' }}>
-              <button 
+              <button
                 onClick={() => setIsNotificationOpen(!isNotificationOpen)}
                 className="btn btn-ghost"
                 style={{ width: '40px', height: '40px', padding: 0, borderRadius: '50%' }}
@@ -418,12 +416,12 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) =>
               {isNotificationOpen && (
                 <>
                   {/* Backdrop */}
-                  <div 
+                  <div
                     onClick={() => setIsNotificationOpen(false)}
                     style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, zIndex: 101 }}
                   />
-                  
-                  <div 
+
+                  <div
                     className="glass-card"
                     style={{
                       position: 'absolute',
@@ -449,7 +447,7 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) =>
                       <span style={{ fontWeight: 700, fontSize: '0.9rem', color: 'var(--text-primary)' }}>Thông báo</span>
                       <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
                         {selectedNotificationIds.length > 0 ? (
-                          <button 
+                          <button
                             onClick={() => deleteSelectedMutation.mutate()}
                             style={{
                               background: 'none',
@@ -464,7 +462,7 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) =>
                             Xóa đã chọn ({selectedNotificationIds.length})
                           </button>
                         ) : unreadData?.unreadCount > 0 && (
-                          <button 
+                          <button
                             onClick={() => markAllReadMutation.mutate()}
                             style={{
                               background: 'none',
@@ -488,8 +486,8 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) =>
                         </div>
                       ) : (
                         notificationsData?.map((item: any) => (
-                          <div 
-                            key={item.notificationId} 
+                          <div
+                            key={item.notificationId}
                             style={{
                               padding: '1rem 1.25rem',
                               borderBottom: '1px solid var(--border-light)',
@@ -503,7 +501,7 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) =>
                           >
                             {/* Checkbox for batch selection */}
                             <div style={{ display: 'flex', alignItems: 'center', alignSelf: 'flex-start', marginTop: '2px' }}>
-                              <input 
+                              <input
                                 type="checkbox"
                                 checked={selectedNotificationIds.includes(item.notificationId)}
                                 onChange={(e) => {
@@ -513,9 +511,9 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) =>
                                     setSelectedNotificationIds(prev => prev.filter(id => id !== item.notificationId));
                                   }
                                 }}
-                                style={{ 
-                                  width: '15px', 
-                                  height: '15px', 
+                                style={{
+                                  width: '15px',
+                                  height: '15px',
                                   cursor: 'pointer',
                                   accentColor: 'var(--accent)'
                                 }}
@@ -561,32 +559,32 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) =>
                                 </div>
                               )}
                             </div>
-                            
+
                             {/* Action Buttons inside notify card */}
-                            <div style={{ 
-                              position: 'absolute', 
-                              right: '12px', 
-                              top: '12px', 
-                              display: 'flex', 
+                            <div style={{
+                              position: 'absolute',
+                              right: '12px',
+                              top: '12px',
+                              display: 'flex',
                               gap: '0.25rem',
                             }}>
                               {!item.isRead && (
-                                <button 
+                                <button
                                   onClick={() => markAsReadMutation.mutate(item.notificationId)}
-                                  className="btn btn-ghost" 
+                                  className="btn btn-ghost"
                                   style={{ padding: '4px', minWidth: 'auto', color: 'var(--success)' }}
                                   title="Đánh dấu đã đọc"
                                 >
                                   <Check size={14} />
                                 </button>
                               )}
-                              <button 
+                              <button
                                 onClick={() => deleteMutation.mutate(item.notificationId)}
-                                className="btn btn-ghost" 
+                                className="btn btn-ghost"
                                 style={{ padding: '4px', minWidth: 'auto', color: 'var(--danger)' }}
                                 title="Xóa thông báo"
                               >
-                                  <Trash2 size={14} />
+                                <Trash2 size={14} />
                               </button>
                             </div>
                           </div>
@@ -615,16 +613,16 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) =>
                 <Bell size={20} style={{ color: 'var(--accent)' }} />
                 Chi Tiết Cuộc Họp
               </h3>
-              <button 
-                type="button" 
-                className="btn-close" 
-                style={{ border: 'none', background: 'none', cursor: 'pointer', color: 'var(--text-secondary)' }} 
+              <button
+                type="button"
+                className="btn-close"
+                style={{ border: 'none', background: 'none', cursor: 'pointer', color: 'var(--text-secondary)' }}
                 onClick={() => setViewingBookingDetail(null)}
               >
                 <X size={18} />
               </button>
             </div>
-            
+
             <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
               {isDetailLoading ? (
                 <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-tertiary)' }}>
@@ -635,14 +633,13 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) =>
                 <>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
-                      <span className={`badge ${
-                        viewingBookingDetail.status === 'APPROVED' ? 'badge-approved' :
+                      <span className={`badge ${viewingBookingDetail.status === 'APPROVED' ? 'badge-approved' :
                         viewingBookingDetail.status === 'PENDING' ? 'badge-pending' :
-                        viewingBookingDetail.status === 'REJECTED' ? 'badge-rejected' : 'badge-cancelled'
-                      }`} style={{ fontSize: '0.75rem' }}>
+                          viewingBookingDetail.status === 'REJECTED' ? 'badge-rejected' : 'badge-cancelled'
+                        }`} style={{ fontSize: '0.75rem' }}>
                         {viewingBookingDetail.status === 'APPROVED' ? 'Đã duyệt' :
-                         viewingBookingDetail.status === 'PENDING' ? 'Chờ duyệt' :
-                         viewingBookingDetail.status === 'REJECTED' ? 'Từ chối' : 'Đã hủy'}
+                          viewingBookingDetail.status === 'PENDING' ? 'Chờ duyệt' :
+                            viewingBookingDetail.status === 'REJECTED' ? 'Từ chối' : 'Đã hủy'}
                       </span>
                       {viewingBookingDetail.titleNotification && (
                         <span style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)', fontStyle: 'italic' }}>
@@ -710,21 +707,21 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) =>
               <button type="button" className="btn btn-ghost" onClick={() => setViewingBookingDetail(null)}>
                 Đóng
               </button>
-              {!isDetailLoading && 
-               viewingBookingDetail.status === 'PENDING' && 
-               viewingBookingDetail.titleNotification === 'Thông báo lịch họp' && 
-               viewingBookingDetail.messageNotification?.includes('mời') && (
-                <button
-                  type="button"
-                  className="btn btn-success"
-                  style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', backgroundColor: 'var(--success)', color: '#fff', border: 'none' }}
-                  onClick={() => confirmParticipateMutation.mutate(viewingBookingDetail.id)}
-                  disabled={confirmParticipateMutation.isPending}
-                >
-                  <CheckCircle size={16} />
-                  {confirmParticipateMutation.isPending ? 'Đang xác nhận...' : 'Xác nhận tham gia'}
-                </button>
-              )}
+              {!isDetailLoading &&
+                viewingBookingDetail.status === 'PENDING' &&
+                viewingBookingDetail.titleNotification === 'Thông báo lịch họp' &&
+                viewingBookingDetail.messageNotification?.includes('mời') && (
+                  <button
+                    type="button"
+                    className="btn btn-success"
+                    style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', backgroundColor: 'var(--success)', color: '#fff', border: 'none' }}
+                    onClick={() => confirmParticipateMutation.mutate(viewingBookingDetail.id)}
+                    disabled={confirmParticipateMutation.isPending}
+                  >
+                    <CheckCircle size={16} />
+                    {confirmParticipateMutation.isPending ? 'Đang xác nhận...' : 'Xác nhận tham gia'}
+                  </button>
+                )}
             </div>
           </div>
         </div>
