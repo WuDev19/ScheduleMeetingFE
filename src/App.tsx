@@ -11,6 +11,7 @@ import { Rooms } from './pages/Rooms';
 import { Profile } from './pages/Profile';
 import { Verify } from './pages/Verify';
 import { Users } from './pages/Users';
+import { Buildings } from './pages/Buildings';
 
 // Create TanStack Query Client
 const queryClient = new QueryClient({
@@ -137,6 +138,14 @@ function App() {
                 element={
                   <ProtectedRoute>
                     <Users />
+                  </ProtectedRoute>
+                } 
+              />
+              <Route 
+                path="/buildings" 
+                element={
+                  <ProtectedRoute>
+                    <Buildings />
                   </ProtectedRoute>
                 } 
               />

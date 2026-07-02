@@ -115,6 +115,7 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) =>
     { name: 'Lịch Đặt Phòng', path: '/bookings', icon: <Calendar size={18} /> },
     { name: 'Phòng Họp', path: '/rooms', icon: <DoorOpen size={18} /> },
     ...(hasRole('ADMIN') ? [
+      { name: 'Quản lý Tòa Nhà', path: '/buildings', icon: <Building size={18} /> },
       { name: 'Quản lý Nhân Viên', path: '/users', icon: <Users size={18} /> }
     ] : []),
     { name: 'Hồ Sơ Cá Nhân', path: '/profile', icon: <User size={18} /> },
