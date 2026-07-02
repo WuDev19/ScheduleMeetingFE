@@ -42,6 +42,19 @@ const formatDateTimeForApi = (dateTimeStr: string): string => {
   return `${yyyy}-${MM}-${dd} ${hh}:${mm}:${ss}${offsetSign}${offsetHours}:${offsetMins}`;
 };
 
+const formatDateTimeLocal = (dateTimeStr: string | undefined | null): string => {
+  if (!dateTimeStr) return '';
+  const date = new Date(dateTimeStr);
+  if (isNaN(date.getTime())) return '';
+  const pad = (num: number) => String(num).padStart(2, '0');
+  const yyyy = date.getFullYear();
+  const MM = pad(date.getMonth() + 1);
+  const dd = pad(date.getDate());
+  const hh = pad(date.getHours());
+  const mm = pad(date.getMinutes());
+  return `${yyyy}-${MM}-${dd}T${hh}:${mm}`;
+};
+
 // Form validation schemas
 const roomSchema = z.object({
   roomName: z.string().min(1, 'Vui lòng nhập tên phòng'),
@@ -80,22 +93,33 @@ const equipmentSchema = z.object({
   availableQuantity: z.coerce.number().min(0, 'Số lượng tối thiểu là 0')
 });
 
+const unavailabilitySchema = z.object({
+  roomId: z.coerce.number().min(1, 'Vui lòng chọn phòng họp'),
+  reason: z.string().min(1, 'Vui lòng nhập lý do không khả dụng'),
+  start: z.string().min(1, 'Vui lòng chọn thời gian bắt đầu'),
+  end: z.string().min(1, 'Vui lòng chọn thời gian kết thúc'),
+}).refine((data) => new Date(data.start) < new Date(data.end), {
+  message: "Thời gian kết thúc phải diễn ra sau thời gian bắt đầu",
+  path: ["end"]
+});
+
 type RoomFormValues = z.infer<typeof roomSchema>;
 type BookingFormValues = z.infer<typeof bookingFormSchema>;
 type EquipmentFormValues = z.infer<typeof equipmentSchema>;
+type UnavailabilityFormValues = z.infer<typeof unavailabilitySchema>;
 
 export const Rooms: React.FC = () => {
   const { hasAuthority, user } = useAuth();
   const { showToast } = useToast();
   const queryClient = useQueryClient();
 
-  const [activeTab, setActiveTab] = useState<'rooms' | 'equipments'>('rooms');
+  const [activeTab, setActiveTab] = useState<'rooms' | 'equipments' | 'unavailabilities'>('rooms');
   const [keyword, setKeyword] = useState('');
   const [filterFloor, setFilterFloor] = useState<string>('');
   const [filterCapacity, setFilterCapacity] = useState<string>('');
   const [filterStart, setFilterStart] = useState<string>('');
   const [filterEnd, setFilterEnd] = useState<string>('');
-  const [activeModal, setActiveModal] = useState<'create' | 'edit' | 'assign' | 'book' | 'create-equip' | 'edit-equip' | null>(null);
+  const [activeModal, setActiveModal] = useState<'create' | 'edit' | 'assign' | 'book' | 'create-equip' | 'edit-equip' | 'create-unavail' | 'edit-unavail' | null>(null);
   const [selectedRoom, setSelectedRoom] = useState<any>(null);
 
   // Equipment tab states
@@ -103,6 +127,16 @@ export const Rooms: React.FC = () => {
   const [equipPage, setEquipPage] = useState(0);
   const [equipPageSize] = useState(6);
   const [selectedEquip, setSelectedEquip] = useState<any>(null);
+
+  // Unavailability tab states
+  const [unavailKeyword, setUnavailKeyword] = useState('');
+  const [unavailPage, setUnavailPage] = useState(0);
+  const [unavailPageSize] = useState(6);
+  const [unavailStart, setUnavailStart] = useState('');
+  const [unavailEnd, setUnavailEnd] = useState('');
+  const [selectedUnavail, setSelectedUnavail] = useState<any>(null);
+  const [unavailDeletedFilter, setUnavailDeletedFilter] = useState<boolean>(false);
+  const canManageUnavailability = hasAuthority('ROOM_UNAVAILABLE:MANAGE');
 
   const handleFloorChange = (val: string) => {
     setFilterFloor(val);
@@ -201,6 +235,32 @@ export const Rooms: React.FC = () => {
   const equipList = equipData?.content || [];
   const equipTotalPages = equipData?.totalPages || 0;
 
+  // Fetch paginated room unavailability list
+  const { data: unavailData, isLoading: isUnavailLoading } = useQuery({
+    queryKey: ['unavailabilities', 'search', unavailKeyword, unavailStart, unavailEnd, unavailPage, unavailDeletedFilter],
+    queryFn: async () => {
+      const isDeletedParam = `&isDeleted=${unavailDeletedFilter}`;
+      if (unavailStart && unavailEnd) {
+        const startOffset = formatDateTimeForApi(unavailStart);
+        const endOffset = formatDateTimeForApi(unavailEnd);
+        const response = await apiClient.get(`/unavailability-room/filter?start=${encodeURIComponent(startOffset)}&end=${encodeURIComponent(endOffset)}&page=${unavailPage}&size=${unavailPageSize}${isDeletedParam}`);
+        return response.data?.data;
+      }
+
+      if (unavailKeyword) {
+        const response = await apiClient.get(`/unavailability-room/search?keyword=${encodeURIComponent(unavailKeyword)}&page=${unavailPage}&size=${unavailPageSize}${isDeletedParam}`);
+        return response.data?.data;
+      }
+
+      const response = await apiClient.get(`/unavailability-room/all?page=${unavailPage}&size=${unavailPageSize}${isDeletedParam}`);
+      return response.data?.data;
+    },
+    enabled: activeTab === 'unavailabilities' && (hasAuthority('ROOM_UNAVAILABLE:VIEW') || hasAuthority('ROOM:CREATE'))
+  });
+
+  const unavailList = unavailData?.content || [];
+  const unavailTotalPages = unavailData?.totalPages || 0;
+
   // React Hook Form for Room creation/updates
   const {
     register: roomRegister,
@@ -241,6 +301,36 @@ export const Rooms: React.FC = () => {
   } = useFieldArray({
     control: bookingControl,
     name: 'equipments'
+  });
+
+  // React Hook Form for Room Unavailability
+  const {
+    register: unavailRegister,
+    handleSubmit: handleUnavailSubmit,
+    reset: resetUnavailForm,
+    watch: unavailWatch,
+    formState: { errors: unavailErrors }
+  } = useForm<UnavailabilityFormValues>({
+    resolver: zodResolver(unavailabilitySchema) as any,
+  });
+
+  const watchedUnavailRoomId = unavailWatch('roomId');
+  const watchedUnavailStart = unavailWatch('start');
+  const watchedUnavailEnd = unavailWatch('end');
+
+  // Query to fetch overlapping bookings for unavailability creation
+  const { data: overlappingBookings, isFetching: isOverlappingLoading } = useQuery({
+    queryKey: ['unavail-overlap', watchedUnavailRoomId, watchedUnavailStart, watchedUnavailEnd],
+    queryFn: async () => {
+      if (!watchedUnavailRoomId || !watchedUnavailStart || !watchedUnavailEnd) return [];
+      const startTime = formatDateTimeForApi(watchedUnavailStart);
+      const endTime = formatDateTimeForApi(watchedUnavailEnd);
+      const response = await apiClient.get(`/booking/overlap-room-unavailability/${watchedUnavailRoomId}`, {
+        params: { start: startTime, end: endTime }
+      });
+      return response.data?.data || [];
+    },
+    enabled: !!watchedUnavailRoomId && !!watchedUnavailStart && !!watchedUnavailEnd && (activeModal === 'create-unavail' || activeModal === 'edit-unavail')
   });
 
   // React Hook Form for Equipment CRUD
@@ -413,6 +503,57 @@ export const Rooms: React.FC = () => {
     }
   });
 
+  // CREATE ROOM UNAVAILABILITY MUTATION
+  const createUnavailMutation = useMutation({
+    mutationFn: async (payload: { roomId: number; reason: string; startTime: string; endTime: string; bookingIdOverLap: number[] }) => {
+      await apiClient.post('/unavailability-room', payload);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['unavailabilities'] });
+      queryClient.invalidateQueries({ queryKey: ['bookings'] });
+      showToast('Thêm phòng họp không khả dụng thành công', 'success');
+      setActiveModal(null);
+      resetUnavailForm();
+    },
+    onError: (err: any) => {
+      const msg = err.response?.data?.message || 'Không thể thêm phòng họp không khả dụng';
+      showToast(msg, 'error');
+    }
+  });
+
+  // UPDATE ROOM UNAVAILABILITY MUTATION
+  const updateUnavailMutation = useMutation({
+    mutationFn: async ({ id, payload }: { id: number; payload: { reason: string; startTime: string; endTime: string } }) => {
+      await apiClient.patch(`/unavailability-room/${id}`, payload);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['unavailabilities'] });
+      showToast('Cập nhật phòng họp không khả dụng thành công', 'success');
+      setActiveModal(null);
+      resetUnavailForm();
+      setSelectedUnavail(null);
+    },
+    onError: (err: any) => {
+      const msg = err.response?.data?.message || 'Không thể cập nhật phòng họp không khả dụng';
+      showToast(msg, 'error');
+    }
+  });
+
+  // DELETE ROOM UNAVAILABILITY (SOFT DELETE) MUTATION
+  const deleteUnavailMutation = useMutation({
+    mutationFn: async (id: number) => {
+      await apiClient.delete(`/unavailability-room/soft/${id}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['unavailabilities'] });
+      showToast('Đã xóa phòng họp không khả dụng thành công', 'success');
+    },
+    onError: (err: any) => {
+      const msg = err.response?.data?.message || 'Không thể xóa phòng họp không khả dụng';
+      showToast(msg, 'error');
+    }
+  });
+
   // CREATE BOOKING MUTATION FROM ROOM PAGE
   const createBookingFromRoomMutation = useMutation({
     mutationFn: async (data: BookingFormValues) => {
@@ -494,6 +635,45 @@ export const Rooms: React.FC = () => {
     }
   };
 
+  const handleEditUnavailClick = (unavail: any) => {
+    setSelectedUnavail(unavail);
+    resetUnavailForm({
+      roomId: unavail.room?.id || 1,
+      reason: unavail.reason,
+      start: formatDateTimeLocal(unavail.start),
+      end: formatDateTimeLocal(unavail.end)
+    });
+    setActiveModal('edit-unavail');
+  };
+
+  const handleDeleteUnavail = (id: number, roomName: string) => {
+    if (window.confirm(`Bạn có chắc chắn muốn xóa lịch bận/bảo trì của phòng "${roomName}"?`)) {
+      deleteUnavailMutation.mutate(id);
+    }
+  };
+
+  const onSaveUnavail = (data: UnavailabilityFormValues) => {
+    if (activeModal === 'create-unavail') {
+      const bookingIds = (overlappingBookings || []).map((b: any) => Number(b.bookingId));
+      createUnavailMutation.mutate({
+        roomId: Number(data.roomId),
+        reason: data.reason,
+        startTime: formatDateTimeForApi(data.start),
+        endTime: formatDateTimeForApi(data.end),
+        bookingIdOverLap: bookingIds
+      });
+    } else if (activeModal === 'edit-unavail' && selectedUnavail) {
+      updateUnavailMutation.mutate({
+        id: selectedUnavail.unId,
+        payload: {
+          reason: data.reason,
+          startTime: formatDateTimeForApi(data.start),
+          endTime: formatDateTimeForApi(data.end)
+        }
+      });
+    }
+  };
+
   const onSaveRoom = (data: RoomFormValues) => {
     if (activeModal === 'create') {
       createRoomMutation.mutate(data);
@@ -567,11 +747,12 @@ export const Rooms: React.FC = () => {
   };
 
   const isAdmin = hasAuthority('ROOM:CREATE');
+  const canViewUnavailability = hasAuthority('ROOM_UNAVAILABLE:VIEW') || isAdmin;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
       {/* Tab controls */}
-      {isAdmin && (
+      {(isAdmin || canViewUnavailability) && (
         <div style={{ display: 'flex', borderBottom: '1px solid var(--border-light)', marginBottom: '0.5rem', gap: '1rem' }}>
           <button
             onClick={() => setActiveTab('rooms')}
@@ -589,25 +770,48 @@ export const Rooms: React.FC = () => {
           >
             Danh sách Phòng họp
           </button>
-          <button
-            onClick={() => {
-              setActiveTab('equipments');
-              setEquipPage(0);
-            }}
-            style={{
-              padding: '10px 16px',
-              fontSize: '0.88rem',
-              fontWeight: 600,
-              border: 'none',
-              background: 'none',
-              color: activeTab === 'equipments' ? 'var(--accent)' : 'var(--text-tertiary)',
-              borderBottom: activeTab === 'equipments' ? '2px solid var(--accent)' : '2px solid transparent',
-              cursor: 'pointer',
-              transition: 'all var(--transition-fast)'
-            }}
-          >
-            Quản lý Thiết bị
-          </button>
+          {canViewUnavailability && (
+            <button
+              onClick={() => {
+                setActiveTab('unavailabilities');
+                setUnavailPage(0);
+              }}
+              style={{
+                padding: '10px 16px',
+                fontSize: '0.88rem',
+                fontWeight: 600,
+                border: 'none',
+                background: 'none',
+                color: activeTab === 'unavailabilities' ? 'var(--accent)' : 'var(--text-tertiary)',
+                borderBottom: activeTab === 'unavailabilities' ? '2px solid var(--accent)' : '2px solid transparent',
+                cursor: 'pointer',
+                transition: 'all var(--transition-fast)'
+              }}
+            >
+              Phòng Không Khả Dụng
+            </button>
+          )}
+          {isAdmin && (
+            <button
+              onClick={() => {
+                setActiveTab('equipments');
+                setEquipPage(0);
+              }}
+              style={{
+                padding: '10px 16px',
+                fontSize: '0.88rem',
+                fontWeight: 600,
+                border: 'none',
+                background: 'none',
+                color: activeTab === 'equipments' ? 'var(--accent)' : 'var(--text-tertiary)',
+                borderBottom: activeTab === 'equipments' ? '2px solid var(--accent)' : '2px solid transparent',
+                cursor: 'pointer',
+                transition: 'all var(--transition-fast)'
+              }}
+            >
+              Quản lý Thiết bị
+            </button>
+          )}
         </div>
       )}
 
@@ -932,6 +1136,249 @@ export const Rooms: React.FC = () => {
                     className="btn btn-secondary"
                     disabled={equipPage >= equipTotalPages - 1}
                     onClick={() => setEquipPage((p) => Math.min(equipTotalPages - 1, p + 1))}
+                    style={{ padding: '6px 12px', fontSize: '0.82rem' }}
+                  >
+                    Sau
+                  </button>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
+
+      {activeTab === 'unavailabilities' && canViewUnavailability && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+          {/* Header controls for Unavailability */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem' }}>
+            <div>
+              <h2 style={{ fontSize: '1.4rem', fontWeight: 700, margin: 0 }}>Phòng Không Khả Dụng</h2>
+              <p style={{ color: 'var(--text-tertiary)', fontSize: '0.85rem' }}>Danh sách thời gian bảo trì/bận của phòng họp</p>
+            </div>
+
+            {canManageUnavailability && (
+              <button
+                className="btn btn-primary"
+                onClick={() => {
+                  setSelectedUnavail(null);
+                  resetUnavailForm({ roomId: roomsData?.[0]?.id || '', reason: '', start: '', end: '' });
+                  setActiveModal('create-unavail');
+                }}
+              >
+                <Plus size={16} /> Thêm lịch phòng không khả dụng
+              </button>
+            )}
+          </div>
+
+          {canManageUnavailability && (
+            <div style={{ display: 'flex', borderBottom: '1px solid var(--border-light)', gap: '1rem', marginBottom: '-0.5rem' }}>
+              <button
+                onClick={() => {
+                  setUnavailDeletedFilter(false);
+                  setUnavailPage(0);
+                }}
+                style={{
+                  padding: '8px 12px',
+                  fontSize: '0.85rem',
+                  fontWeight: 600,
+                  border: 'none',
+                  background: 'none',
+                  color: !unavailDeletedFilter ? 'var(--accent)' : 'var(--text-tertiary)',
+                  borderBottom: !unavailDeletedFilter ? '2px solid var(--accent)' : '2px solid transparent',
+                  cursor: 'pointer',
+                  transition: 'all var(--transition-fast)'
+                }}
+              >
+                Lịch bận hiện tại
+              </button>
+              <button
+                onClick={() => {
+                  setUnavailDeletedFilter(true);
+                  setUnavailPage(0);
+                }}
+                style={{
+                  padding: '8px 12px',
+                  fontSize: '0.85rem',
+                  fontWeight: 600,
+                  border: 'none',
+                  background: 'none',
+                  color: unavailDeletedFilter ? 'var(--accent)' : 'var(--text-tertiary)',
+                  borderBottom: unavailDeletedFilter ? '2px solid var(--accent)' : '2px solid transparent',
+                  cursor: 'pointer',
+                  transition: 'all var(--transition-fast)'
+                }}
+              >
+                Lịch sử đã xóa
+              </button>
+            </div>
+          )}
+
+          {/* Search/filter toolbar */}
+          <div className="glass-card" style={{ display: 'flex', flexWrap: 'wrap', gap: '1rem', padding: '1rem' }}>
+            <div style={{ position: 'relative', flexGrow: 1, minWidth: '240px' }}>
+              <span style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-tertiary)' }}>
+                <Search size={16} />
+              </span>
+              <input
+                type="text"
+                className="form-control"
+                style={{ width: '100%', paddingLeft: '2.5rem' }}
+                placeholder="Tìm theo lý do bận..."
+                value={unavailKeyword}
+                onChange={(e) => {
+                  setUnavailKeyword(e.target.value);
+                  setUnavailPage(0);
+                }}
+              />
+            </div>
+
+            <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+              <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Từ:</span>
+              <input
+                type="datetime-local"
+                className="form-control"
+                style={{ width: '200px' }}
+                value={unavailStart}
+                onChange={(e) => {
+                  setUnavailStart(e.target.value);
+                  setUnavailPage(0);
+                }}
+              />
+            </div>
+
+            <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+              <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Đến:</span>
+              <input
+                type="datetime-local"
+                className="form-control"
+                style={{ width: '200px' }}
+                value={unavailEnd}
+                onChange={(e) => {
+                  setUnavailEnd(e.target.value);
+                  setUnavailPage(0);
+                }}
+              />
+            </div>
+
+            {(unavailKeyword || unavailStart || unavailEnd) && (
+              <button
+                className="btn btn-ghost"
+                onClick={() => {
+                  setUnavailKeyword('');
+                  setUnavailStart('');
+                  setUnavailEnd('');
+                  setUnavailPage(0);
+                }}
+                style={{ color: 'var(--danger)' }}
+              >
+                Xóa lọc
+              </button>
+            )}
+          </div>
+
+          {/* Unavailabilities Listing */}
+          {isUnavailLoading ? (
+            <div className="grid-cols-3">
+              <div className="skeleton" style={{ height: '180px' }} />
+              <div className="skeleton" style={{ height: '180px' }} />
+              <div className="skeleton" style={{ height: '180px' }} />
+            </div>
+          ) : unavailList.length === 0 ? (
+            <div className="glass-card" style={{ padding: '3rem', textAlign: 'center', color: 'var(--text-tertiary)' }}>
+              Không có lịch phòng không khả dụng nào được tìm thấy.
+            </div>
+          ) : (
+            <>
+              <div className="grid-cols-3">
+                {unavailList.map((un: any) => {
+                  const now = new Date();
+                  const startD = new Date(un.start);
+                  const endD = new Date(un.end);
+                  let badgeText = 'Đang diễn ra';
+                  let badgeClass = 'badge-pending';
+
+                  if (unavailDeletedFilter) {
+                    badgeText = 'Đã xóa';
+                    badgeClass = 'badge-cancelled';
+                  } else if (now < startD) {
+                    badgeText = 'Sắp diễn ra';
+                    badgeClass = 'badge-approved';
+                  } else if (now > endD) {
+                    badgeText = 'Đã kết thúc';
+                    badgeClass = 'badge-cancelled';
+                  }
+
+                  return (
+                    <div
+                      key={un.unId}
+                      className="glass-card"
+                      style={{ display: 'flex', flexDirection: 'column', justifyContent: 'space-between', minHeight: '180px', borderLeft: unavailDeletedFilter ? '4px solid var(--text-tertiary)' : '4px solid var(--danger)' }}
+                    >
+                      <div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.5rem' }}>
+                          <h4 style={{ margin: 0, fontSize: '1.1rem', color: 'var(--text-primary)', fontWeight: 700 }}>
+                            {un.room?.roomName || 'Phòng họp'}
+                          </h4>
+                          <span className={`badge ${badgeClass}`} style={{ fontSize: '0.65rem' }}>
+                            {badgeText}
+                          </span>
+                        </div>
+
+                        <p style={{ margin: '0 0 0.5rem 0', fontSize: '0.75rem', color: 'var(--text-tertiary)' }}>
+                          Tòa nhà: {un.room?.building?.buildingName || 'Tòa A'}
+                        </p>
+
+                        <p style={{ margin: '0 0 0.75rem 0', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                          <strong>Lý do:</strong> {un.reason}
+                        </p>
+
+                        <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                          <span>⏰ <strong>Từ:</strong> {new Date(un.start).toLocaleString('vi-VN')}</span>
+                          <span>⏰ <strong>Đến:</strong> {new Date(un.end).toLocaleString('vi-VN')}</span>
+                        </div>
+                      </div>
+
+                      {canManageUnavailability && !unavailDeletedFilter && (
+                        <div style={{ display: 'flex', gap: '0.5rem', borderTop: '1px solid var(--border-light)', paddingTop: '0.5rem', marginTop: '0.75rem', justifyContent: 'flex-end' }}>
+                          <button
+                            onClick={() => handleEditUnavailClick(un)}
+                            className="btn btn-ghost"
+                            style={{ padding: '4px 8px', fontSize: '0.75rem', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '4px' }}
+                          >
+                            <Edit3 size={12} /> Sửa
+                          </button>
+                          <button
+                            onClick={() => handleDeleteUnavail(un.unId, un.room?.roomName)}
+                            className="btn btn-ghost"
+                            style={{ padding: '4px 8px', fontSize: '0.75rem', color: 'var(--danger)', display: 'flex', alignItems: 'center', gap: '4px' }}
+                          >
+                            <Trash2 size={12} /> Xóa
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Unavailability Pagination */}
+              {unavailTotalPages > 1 && (
+                <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '0.5rem', marginTop: '1rem' }}>
+                  <button
+                    className="btn btn-secondary"
+                    disabled={unavailPage === 0}
+                    onClick={() => setUnavailPage((p) => Math.max(0, p - 1))}
+                    style={{ padding: '6px 12px', fontSize: '0.82rem' }}
+                  >
+                    Trước
+                  </button>
+                  <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                    Trang {unavailPage + 1} / {unavailTotalPages}
+                  </span>
+                  <button
+                    className="btn btn-secondary"
+                    disabled={unavailPage >= unavailTotalPages - 1}
+                    onClick={() => setUnavailPage((p) => Math.min(unavailTotalPages - 1, p + 1))}
                     style={{ padding: '6px 12px', fontSize: '0.82rem' }}
                   >
                     Sau
@@ -1385,6 +1832,136 @@ export const Rooms: React.FC = () => {
                 disabled={createEquipMutation.isPending || updateEquipMutation.isPending}
               >
                 {createEquipMutation.isPending || updateEquipMutation.isPending ? 'Đang lưu...' : 'Lưu'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {/* CREATE & EDIT ROOM UNAVAILABILITY MODAL */}
+      {(activeModal === 'create-unavail' || activeModal === 'edit-unavail') && (
+        <div className="modal-overlay">
+          <form onSubmit={handleUnavailSubmit(onSaveUnavail)} className="modal-content" style={{ maxWidth: '550px' }}>
+            <div className="modal-header">
+              <h3 style={{ margin: 0, fontSize: '1.15rem' }}>
+                {activeModal === 'create-unavail' ? 'Thêm phòng họp không khả dụng' : 'Chỉnh sửa phòng họp không khả dụng'}
+              </h3>
+              <button type="button" className="btn btn-ghost" style={{ padding: '4px', minWidth: 'auto' }} onClick={() => setActiveModal(null)}>
+                <XCircle size={20} />
+              </button>
+            </div>
+
+            <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+              {activeModal === 'create-unavail' ? (
+                <div className="form-group">
+                  <label className="form-label" htmlFor="unavail-room">Chọn phòng họp *</label>
+                  <select
+                    id="unavail-room"
+                    className="form-control"
+                    {...unavailRegister('roomId')}
+                  >
+                    <option value="">-- Chọn phòng họp --</option>
+                    {roomsData?.map((r: any) => (
+                      <option key={r.id} value={r.id}>{r.roomName} ({r.building?.buildingName})</option>
+                    ))}
+                  </select>
+                  {unavailErrors.roomId && <span className="form-error">{unavailErrors.roomId.message}</span>}
+                </div>
+              ) : (
+                <div className="form-group">
+                  <label className="form-label">Phòng họp</label>
+                  <input
+                    className="form-control"
+                    value={selectedUnavail?.room?.roomName || ''}
+                    disabled
+                  />
+                </div>
+              )}
+
+              <div className="form-group">
+                <label className="form-label" htmlFor="unavail-reason">Lý do không khả dụng (bảo trì, sự kiện...) *</label>
+                <textarea
+                  id="unavail-reason"
+                  className="form-control"
+                  style={{ minHeight: '60px', resize: 'vertical' }}
+                  placeholder="Nhập lý do bận, ví dụ: Bảo trì đường mạng, Họp hội đồng thành phố..."
+                  {...unavailRegister('reason')}
+                />
+                {unavailErrors.reason && <span className="form-error">{unavailErrors.reason.message}</span>}
+              </div>
+
+              <div className="grid-cols-2" style={{ gap: '1rem' }}>
+                <div className="form-group">
+                  <label className="form-label" htmlFor="unavail-start">Thời gian bắt đầu *</label>
+                  <input
+                    id="unavail-start"
+                    type="datetime-local"
+                    className="form-control"
+                    {...unavailRegister('start')}
+                  />
+                  {unavailErrors.start && <span className="form-error">{unavailErrors.start.message}</span>}
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label" htmlFor="unavail-end">Thời gian kết thúc *</label>
+                  <input
+                    id="unavail-end"
+                    type="datetime-local"
+                    className="form-control"
+                    {...unavailRegister('end')}
+                  />
+                  {unavailErrors.end && <span className="form-error">{unavailErrors.end.message}</span>}
+                </div>
+              </div>
+
+              {/* OVERLAPPING BOOKINGS SECTION */}
+              {activeModal === 'create-unavail' && watchedUnavailRoomId && watchedUnavailStart && watchedUnavailEnd && (
+                <div style={{ borderTop: '1px solid var(--border-light)', paddingTop: '1rem', marginTop: '0.5rem' }}>
+                  <span className="form-label" style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 600 }}>
+                    Lịch họp bị ảnh hưởng trong khoảng thời gian này
+                  </span>
+
+                  {isOverlappingLoading ? (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--text-tertiary)', fontSize: '0.82rem' }}>
+                      <div className="spinner" style={{ width: '14px', height: '14px', border: '2px solid var(--border-light)', borderTopColor: 'var(--accent)', borderRadius: '50%', animation: 'spin 1s linear infinite' }} />
+                      Đang kiểm tra lịch trùng...
+                    </div>
+                  ) : !overlappingBookings || overlappingBookings.length === 0 ? (
+                    <div style={{ padding: '0.5rem', borderRadius: 'var(--radius-sm)', backgroundColor: 'rgba(16, 185, 129, 0.08)', border: '1px solid rgba(16, 185, 129, 0.2)', color: 'var(--success)', fontSize: '0.8rem' }}>
+                      ✓ Không có lịch họp nào bị trùng.
+                    </div>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                      <div style={{ padding: '0.5rem 0.75rem', borderRadius: 'var(--radius-sm)', backgroundColor: 'rgba(239, 68, 68, 0.08)', border: '1px solid rgba(239, 68, 68, 0.2)', color: 'var(--danger)', fontSize: '0.78rem', fontWeight: 600 }}>
+                        ⚠ Cảnh báo: Có {overlappingBookings.length} lịch họp đang hoạt động sẽ tự động bị HỦY và gửi thông báo tới người tham gia:
+                      </div>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', maxHeight: '150px', overflowY: 'auto', paddingRight: '4px' }}>
+                        {overlappingBookings.map((b: any) => (
+                          <div key={b.bookingId} style={{ padding: '0.5rem', borderRadius: 'var(--radius-sm)', backgroundColor: 'var(--bg-tertiary)', border: '1px solid var(--border-light)', fontSize: '0.8rem' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 600 }}>
+                              <span>{b.title}</span>
+                              <span style={{ color: 'var(--danger)' }}>#{b.bookingId}</span>
+                            </div>
+                            <div style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)', marginTop: '2px' }}>
+                              Người đặt: {b.userBooked} | {new Date(b.startTime).toLocaleString('vi-VN')} – {new Date(b.endTime).toLocaleString('vi-VN')}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            <div className="modal-footer">
+              <button type="button" className="btn btn-secondary" onClick={() => setActiveModal(null)}>Hủy</button>
+              <button
+                type="submit"
+                className="btn btn-primary"
+                disabled={createUnavailMutation.isPending || updateUnavailMutation.isPending}
+              >
+                {createUnavailMutation.isPending || updateUnavailMutation.isPending ? 'Đang lưu...' : 'Lưu'}
               </button>
             </div>
           </form>

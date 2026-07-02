@@ -305,6 +305,25 @@ export const Bookings: React.FC = () => {
         const url = `/booking/view?viewType=${calendarViewType}&targetDate=${targetDate}`;
         const response = await apiClient.get(url);
         let result = response.data?.data || [];
+
+        try {
+          const unavailResponse = await apiClient.get('/unavailability-room/all?isDeleted=false&page=0&size=1000');
+          const unavailList = unavailResponse.data?.data?.content || [];
+          const mappedUnavail = unavailList.map((un: any) => ({
+            id: `unavail-${un.unId}`,
+            title: `[BẬN/BẢO TRÌ] ${un.reason}`,
+            startTime: un.start,
+            endTime: un.end,
+            roomName: un.room?.roomName || 'Phòng họp',
+            roomId: un.room?.id,
+            status: 'UNAVAILABLE',
+            isUnavailability: true
+          }));
+          result = [...result, ...mappedUnavail];
+        } catch (error) {
+          console.error("Error fetching unavailabilities for calendar:", error);
+        }
+
         // Client-side filter: compare username from JWT (user.username = JWT sub claim) with b.username from API
         if (filterMyBookings && user?.username) {
           result = result.filter((b: any) => b.username === user.username);
@@ -631,6 +650,7 @@ export const Bookings: React.FC = () => {
       case 'REJECTED': return 'Từ chối';
       case 'CANCELLED': return 'Đã hủy';
       case 'CANCEL_PENDING': return 'Chờ hủy';
+      case 'UNAVAILABLE': return 'Bận/Bảo trì';
       default: return status || 'Chờ duyệt';
     }
   };
@@ -914,6 +934,7 @@ export const Bookings: React.FC = () => {
     if (status === 'PENDING') return 'var(--warning)';
     if (status === 'REJECTED') return 'var(--danger)';
     if (status === 'CANCELLED') return 'var(--text-tertiary)';
+    if (status === 'UNAVAILABLE') return 'var(--text-tertiary)';
     return 'var(--warning)';
   };
 
@@ -922,13 +943,21 @@ export const Bookings: React.FC = () => {
     if (status === 'PENDING') return 'rgba(245, 158, 11, 0.12)';
     if (status === 'REJECTED') return 'rgba(239, 68, 68, 0.12)';
     if (status === 'CANCELLED') return 'rgba(100, 116, 139, 0.12)';
+    if (status === 'UNAVAILABLE') return 'rgba(100, 116, 139, 0.18)';
     return 'rgba(245, 158, 11, 0.12)';
   };
 
   const renderBookingCard = (b: any, compact = false) => (
     <div
       key={b.id}
-      onClick={(e) => { e.stopPropagation(); handleBookingClick(b); }}
+      onClick={(e) => {
+        e.stopPropagation();
+        if (b.isUnavailability) {
+          showToast(b.title, 'info');
+          return;
+        }
+        handleBookingClick(b);
+      }}
       style={{
         display: 'flex',
         flexDirection: 'column',
@@ -1075,7 +1104,14 @@ export const Bookings: React.FC = () => {
                       {dateBookings.map((b: any) => (
                         <div
                           key={b.id}
-                          onClick={(e) => { e.stopPropagation(); handleBookingClick(b); }}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (b.isUnavailability) {
+                              showToast(b.title, 'info');
+                              return;
+                            }
+                            handleBookingClick(b);
+                          }}
                           style={{
                             display: 'flex', flexDirection: 'column', gap: '4px',
                             padding: '8px 10px',
@@ -1230,7 +1266,14 @@ export const Bookings: React.FC = () => {
                     dateBookings.map((b: any) => (
                       <div
                         key={b.id}
-                        onClick={(e) => { e.stopPropagation(); handleBookingClick(b); }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (b.isUnavailability) {
+                            showToast(b.title, 'info');
+                            return;
+                          }
+                          handleBookingClick(b);
+                        }}
                         style={{
                           display: 'flex', flexDirection: 'column', gap: '3px',
                           padding: '6px 8px',
