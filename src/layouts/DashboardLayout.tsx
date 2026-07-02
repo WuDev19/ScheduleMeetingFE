@@ -17,7 +17,13 @@ import {
   Menu, 
   Check, 
   Trash2, 
-  Building 
+  Building,
+  X,
+  Clock,
+  Phone,
+  Mail,
+  CheckCircle,
+  Eye
 } from 'lucide-react';
 
 interface DashboardLayoutProps {
@@ -48,6 +54,11 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) =>
   // Drawer / Menu responsiveness
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isNotificationOpen, setIsNotificationOpen] = useState(false);
+
+  // Booking Detail Modal state
+  const [viewingBookingDetail, setViewingBookingDetail] = useState<any>(null);
+  const [isDetailLoading, setIsDetailLoading] = useState(false);
+  const [selectedNotificationIds, setSelectedNotificationIds] = useState<number[]>([]);
 
   // Fetch unread notification count
   const { data: unreadData } = useQuery({
@@ -101,6 +112,58 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) =>
       queryClient.invalidateQueries({ queryKey: ['notifications'] });
       showToast('Đã xóa thông báo', 'success');
     },
+  });
+
+  // Fetch details and open modal
+  const handleViewBookingDetail = async (bookingId: number, notificationId: number) => {
+    try {
+      setIsDetailLoading(true);
+      setViewingBookingDetail({}); // open modal with loading indicator
+      const response = await apiClient.get(`/booking/${bookingId}/detail/notification/${notificationId}`);
+      setViewingBookingDetail(response.data?.data);
+      // Mark as read
+      markAsReadMutation.mutate(notificationId);
+    } catch (err: any) {
+      const msg = err.response?.data?.message || 'Không thể tải chi tiết cuộc họp';
+      showToast(msg, 'error');
+      setViewingBookingDetail(null);
+    } finally {
+      setIsDetailLoading(false);
+    }
+  };
+
+  // Confirm booking mutation
+  const confirmParticipateMutation = useMutation({
+    mutationFn: async (bookingId: number) => {
+      await apiClient.post(`/booking/${bookingId}/attendee/confirm`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['notifications'] });
+      showToast('Xác nhận tham gia họp thành công!', 'success');
+      setViewingBookingDetail((prev: any) => prev ? { ...prev, status: 'APPROVED' } : null);
+    },
+    onError: (err: any) => {
+      const msg = err.response?.data?.message || 'Không thể xác nhận tham gia';
+      showToast(msg, 'error');
+    }
+  });
+
+  // Delete selected notifications mutation
+  const deleteSelectedMutation = useMutation({
+    mutationFn: async () => {
+      await apiClient.delete('/notification/selected', {
+        data: selectedNotificationIds
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['notifications'] });
+      setSelectedNotificationIds([]);
+      showToast('Đã xóa các thông báo đã chọn', 'success');
+    },
+    onError: (err: any) => {
+      const msg = err.response?.data?.message || 'Không thể xóa các thông báo đã chọn';
+      showToast(msg, 'error');
+    }
   });
 
   const handleLogout = () => {
@@ -384,21 +447,38 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) =>
                       backgroundColor: 'var(--bg-tertiary)'
                     }}>
                       <span style={{ fontWeight: 700, fontSize: '0.9rem', color: 'var(--text-primary)' }}>Thông báo</span>
-                      {unreadData?.unreadCount > 0 && (
-                        <button 
-                          onClick={() => markAllReadMutation.mutate()}
-                          style={{
-                            background: 'none',
-                            border: 'none',
-                            color: 'var(--accent)',
-                            fontSize: '0.75rem',
-                            fontWeight: 600,
-                            cursor: 'pointer',
-                          }}
-                        >
-                          Đánh dấu đã đọc tất cả
-                        </button>
-                      )}
+                      <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
+                        {selectedNotificationIds.length > 0 ? (
+                          <button 
+                            onClick={() => deleteSelectedMutation.mutate()}
+                            style={{
+                              background: 'none',
+                              border: 'none',
+                              color: 'var(--danger)',
+                              fontSize: '0.75rem',
+                              fontWeight: 600,
+                              cursor: 'pointer',
+                            }}
+                            disabled={deleteSelectedMutation.isPending}
+                          >
+                            Xóa đã chọn ({selectedNotificationIds.length})
+                          </button>
+                        ) : unreadData?.unreadCount > 0 && (
+                          <button 
+                            onClick={() => markAllReadMutation.mutate()}
+                            style={{
+                              background: 'none',
+                              border: 'none',
+                              color: 'var(--accent)',
+                              fontSize: '0.75rem',
+                              fontWeight: 600,
+                              cursor: 'pointer',
+                            }}
+                          >
+                            Đánh dấu đã đọc tất cả
+                          </button>
+                        )}
+                      </div>
                     </div>
 
                     <div style={{ overflowY: 'auto', flexGrow: 1, maxHeight: '380px' }}>
@@ -409,41 +489,90 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) =>
                       ) : (
                         notificationsData?.map((item: any) => (
                           <div 
-                            key={item.id} 
+                            key={item.notificationId} 
                             style={{
                               padding: '1rem 1.25rem',
                               borderBottom: '1px solid var(--border-light)',
                               display: 'flex',
-                              flexDirection: 'column',
-                              gap: '0.25rem',
-                              backgroundColor: item.status === 'UNREAD' ? 'var(--accent-light)' : 'transparent',
+                              flexDirection: 'row',
+                              gap: '0.75rem',
+                              backgroundColor: !item.isRead ? 'var(--accent-light)' : 'transparent',
                               position: 'relative',
                               transition: 'all var(--transition-fast)',
                             }}
                           >
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', paddingRight: '2rem' }}>
-                              <h4 style={{ margin: 0, fontSize: '0.85rem', fontWeight: item.status === 'UNREAD' ? 700 : 500, color: 'var(--text-primary)' }}>
-                                {item.title || 'Thông báo lịch họp'}
-                              </h4>
-                              <span style={{ fontSize: '0.7rem', color: 'var(--text-tertiary)' }}>
-                                {new Date(item.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                              </span>
+                            {/* Checkbox for batch selection */}
+                            <div style={{ display: 'flex', alignItems: 'center', alignSelf: 'flex-start', marginTop: '2px' }}>
+                              <input 
+                                type="checkbox"
+                                checked={selectedNotificationIds.includes(item.notificationId)}
+                                onChange={(e) => {
+                                  if (e.target.checked) {
+                                    setSelectedNotificationIds(prev => [...prev, item.notificationId]);
+                                  } else {
+                                    setSelectedNotificationIds(prev => prev.filter(id => id !== item.notificationId));
+                                  }
+                                }}
+                                style={{ 
+                                  width: '15px', 
+                                  height: '15px', 
+                                  cursor: 'pointer',
+                                  accentColor: 'var(--accent)'
+                                }}
+                              />
                             </div>
-                            <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
-                              {item.message}
-                            </p>
+
+                            {/* Card Content wrapper */}
+                            <div style={{ flexGrow: 1, display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', paddingRight: '2.5rem' }}>
+                                <h4 style={{ margin: 0, fontSize: '0.85rem', fontWeight: !item.isRead ? 700 : 500, color: 'var(--text-primary)' }}>
+                                  {item.title || 'Thông báo lịch họp'}
+                                </h4>
+                                <span style={{ fontSize: '0.7rem', color: 'var(--text-tertiary)' }}>
+                                  {new Date(item.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                </span>
+                              </div>
+                              <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                                {item.message}
+                              </p>
+
+                              {item.bookingId && (
+                                <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem', flexWrap: 'wrap' }}>
+                                  <button
+                                    onClick={() => handleViewBookingDetail(item.bookingId, item.notificationId)}
+                                    className="btn btn-ghost"
+                                    style={{ padding: '2px 8px', fontSize: '0.7rem', height: '24px', display: 'flex', alignItems: 'center', gap: '4px', border: '1px solid var(--border-light)' }}
+                                  >
+                                    <Eye size={12} /> Chi tiết
+                                  </button>
+                                  {item.title === 'Thông báo lịch họp' && item.message?.includes('mời') && (
+                                    <button
+                                      onClick={() => {
+                                        confirmParticipateMutation.mutate(item.bookingId);
+                                        markAsReadMutation.mutate(item.notificationId);
+                                      }}
+                                      className="btn"
+                                      style={{ padding: '2px 8px', fontSize: '0.7rem', height: '24px', backgroundColor: 'var(--success)', color: '#fff', border: 'none', display: 'flex', alignItems: 'center', gap: '4px' }}
+                                      disabled={confirmParticipateMutation.isPending}
+                                    >
+                                      <CheckCircle size={12} /> Xác nhận
+                                    </button>
+                                  )}
+                                </div>
+                              )}
+                            </div>
                             
                             {/* Action Buttons inside notify card */}
                             <div style={{ 
                               position: 'absolute', 
-                              right: '10px', 
-                              bottom: '10px', 
+                              right: '12px', 
+                              top: '12px', 
                               display: 'flex', 
                               gap: '0.25rem',
                             }}>
-                              {item.status === 'UNREAD' && (
+                              {!item.isRead && (
                                 <button 
-                                  onClick={() => markAsReadMutation.mutate(item.id)}
+                                  onClick={() => markAsReadMutation.mutate(item.notificationId)}
                                   className="btn btn-ghost" 
                                   style={{ padding: '4px', minWidth: 'auto', color: 'var(--success)' }}
                                   title="Đánh dấu đã đọc"
@@ -452,7 +581,7 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) =>
                                 </button>
                               )}
                               <button 
-                                onClick={() => deleteMutation.mutate(item.id)}
+                                onClick={() => deleteMutation.mutate(item.notificationId)}
                                 className="btn btn-ghost" 
                                 style={{ padding: '4px', minWidth: 'auto', color: 'var(--danger)' }}
                                 title="Xóa thông báo"
@@ -476,6 +605,130 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) =>
           {children}
         </main>
       </div>
+
+      {/* Booking Detail Modal from Notification */}
+      {viewingBookingDetail && (
+        <div className="modal-overlay" style={{ zIndex: 1100 }}>
+          <div className="modal-content" style={{ maxWidth: '550px' }}>
+            <div className="modal-header">
+              <h3 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <Bell size={20} style={{ color: 'var(--accent)' }} />
+                Chi Tiết Cuộc Họp
+              </h3>
+              <button 
+                type="button" 
+                className="btn-close" 
+                style={{ border: 'none', background: 'none', cursor: 'pointer', color: 'var(--text-secondary)' }} 
+                onClick={() => setViewingBookingDetail(null)}
+              >
+                <X size={18} />
+              </button>
+            </div>
+            
+            <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+              {isDetailLoading ? (
+                <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-tertiary)' }}>
+                  <div className="spinner" style={{ width: '24px', height: '24px', margin: '0 auto 10px auto', border: '3px solid var(--border-light)', borderTopColor: 'var(--accent)', borderRadius: '50%', animation: 'spin 1s linear infinite' }} />
+                  Đang tải chi tiết cuộc họp...
+                </div>
+              ) : (
+                <>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                      <span className={`badge ${
+                        viewingBookingDetail.status === 'APPROVED' ? 'badge-approved' :
+                        viewingBookingDetail.status === 'PENDING' ? 'badge-pending' :
+                        viewingBookingDetail.status === 'REJECTED' ? 'badge-rejected' : 'badge-cancelled'
+                      }`} style={{ fontSize: '0.75rem' }}>
+                        {viewingBookingDetail.status === 'APPROVED' ? 'Đã duyệt' :
+                         viewingBookingDetail.status === 'PENDING' ? 'Chờ duyệt' :
+                         viewingBookingDetail.status === 'REJECTED' ? 'Từ chối' : 'Đã hủy'}
+                      </span>
+                      {viewingBookingDetail.titleNotification && (
+                        <span style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)', fontStyle: 'italic' }}>
+                          ({viewingBookingDetail.titleNotification})
+                        </span>
+                      )}
+                    </div>
+                    <h4 style={{ margin: '0.5rem 0 0 0', fontSize: '1.2rem', fontWeight: 700, color: 'var(--text-primary)' }}>
+                      {viewingBookingDetail.title}
+                    </h4>
+                  </div>
+
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', backgroundColor: 'var(--bg-tertiary)', padding: '1rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-light)' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.85rem' }}>
+                      <Clock size={16} style={{ color: 'var(--accent)', minWidth: '16px' }} />
+                      <span style={{ fontWeight: 600 }}>Thời gian:</span>
+                      <span>
+                        {new Date(viewingBookingDetail.startTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} – {new Date(viewingBookingDetail.endTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        {', '}
+                        {new Date(viewingBookingDetail.startTime).toLocaleDateString('vi-VN')}
+                      </span>
+                    </div>
+
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.85rem' }}>
+                      <DoorOpen size={16} style={{ color: 'var(--accent)', minWidth: '16px' }} />
+                      <span style={{ fontWeight: 600 }}>Phòng họp:</span>
+                      <span>{viewingBookingDetail.roomName} (Tầng {viewingBookingDetail.floorNumber}, {viewingBookingDetail.roomAddress})</span>
+                    </div>
+
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.85rem' }}>
+                      <User size={16} style={{ color: 'var(--accent)', minWidth: '16px' }} />
+                      <span style={{ fontWeight: 600 }}>Người đặt:</span>
+                      <span>{viewingBookingDetail.userBooked} ({viewingBookingDetail.email}{viewingBookingDetail.phone ? `, SĐT: ${viewingBookingDetail.phone}` : ''})</span>
+                    </div>
+
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.85rem' }}>
+                      <Users size={16} style={{ color: 'var(--accent)', minWidth: '16px' }} />
+                      <span style={{ fontWeight: 600 }}>Số lượng tham gia:</span>
+                      <span>{viewingBookingDetail.attendee} người</span>
+                    </div>
+                  </div>
+
+                  {viewingBookingDetail.description && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
+                      <span style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-secondary)' }}>Mô tả cuộc họp:</span>
+                      <p style={{ margin: 0, fontSize: '0.82rem', color: 'var(--text-secondary)', lineHeight: 1.5, backgroundColor: 'rgba(0,0,0,0.01)', padding: '0.75rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-light)', whiteSpace: 'pre-wrap' }}>
+                        {viewingBookingDetail.description}
+                      </p>
+                    </div>
+                  )}
+
+                  {viewingBookingDetail.messageNotification && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem', borderLeft: '3px solid var(--accent)', paddingLeft: '0.75rem' }}>
+                      <span style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-tertiary)' }}>Nội dung thông báo:</span>
+                      <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--text-secondary)', fontStyle: 'italic' }}>
+                        "{viewingBookingDetail.messageNotification}"
+                      </p>
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+
+            <div className="modal-footer" style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
+              <button type="button" className="btn btn-ghost" onClick={() => setViewingBookingDetail(null)}>
+                Đóng
+              </button>
+              {!isDetailLoading && 
+               viewingBookingDetail.status === 'PENDING' && 
+               viewingBookingDetail.titleNotification === 'Thông báo lịch họp' && 
+               viewingBookingDetail.messageNotification?.includes('mời') && (
+                <button
+                  type="button"
+                  className="btn btn-success"
+                  style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', backgroundColor: 'var(--success)', color: '#fff', border: 'none' }}
+                  onClick={() => confirmParticipateMutation.mutate(viewingBookingDetail.id)}
+                  disabled={confirmParticipateMutation.isPending}
+                >
+                  <CheckCircle size={16} />
+                  {confirmParticipateMutation.isPending ? 'Đang xác nhận...' : 'Xác nhận tham gia'}
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       <style>{`
         @media (max-width: 1024px) {
