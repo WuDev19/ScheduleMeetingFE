@@ -136,6 +136,7 @@ export const Rooms: React.FC = () => {
   const [unavailEnd, setUnavailEnd] = useState('');
   const [selectedUnavail, setSelectedUnavail] = useState<any>(null);
   const [unavailDeletedFilter, setUnavailDeletedFilter] = useState<boolean>(false);
+  const [hasCheckedOverlap, setHasCheckedOverlap] = useState(false);
   const canManageUnavailability = hasAuthority('ROOM_UNAVAILABLE:MANAGE');
 
   const handleFloorChange = (val: string) => {
@@ -177,9 +178,13 @@ export const Rooms: React.FC = () => {
     }
   };
 
-  // 1. Fetch Rooms list
-  const { data: roomsData, isLoading: isRoomsLoading } = useQuery({
-    queryKey: ['rooms', 'list', keyword, filterFloor, filterCapacity, filterStart, filterEnd],
+  // Rooms tab pagination states
+  const [roomPage, setRoomPage] = useState(0);
+  const [roomPageSize] = useState(24);
+
+  // 1. Fetch Rooms list (paginated)
+  const { data: roomsPageData, isLoading: isRoomsLoading } = useQuery({
+    queryKey: ['rooms', 'list', keyword, filterFloor, filterCapacity, filterStart, filterEnd, roomPage, roomPageSize],
     queryFn: async () => {
       if (filterStart && filterEnd) {
         const startTime = formatDateTimeForApi(filterStart);
@@ -187,20 +192,32 @@ export const Rooms: React.FC = () => {
         const response = await apiClient.request({
           url: '/room/not-overlap',
           method: 'GET',
-          params: { start: startTime, end: endTime }
+          params: { start: startTime, end: endTime, page: roomPage, size: roomPageSize }
         });
-        return response.data?.data?.content || [];
+        return response.data?.data;
       }
 
-      let url = '/room/all?page=0&size=20';
+      let url = `/room/all?page=${roomPage}&size=${roomPageSize}`;
       if (keyword) {
-        url = `/room/search?keyword=${encodeURIComponent(keyword)}&page=0&size=20`;
+        url = `/room/search?keyword=${encodeURIComponent(keyword)}&page=${roomPage}&size=${roomPageSize}`;
       } else if (filterFloor || filterCapacity) {
-        url = `/room/filter?page=0&size=20`;
+        url = `/room/filter?page=${roomPage}&size=${roomPageSize}`;
         if (filterFloor) url += `&floorNumber=${filterFloor}`;
         if (filterCapacity) url += `&capacity=${filterCapacity}`;
       }
       const response = await apiClient.get(url);
+      return response.data?.data;
+    }
+  });
+
+  const roomsList = roomsPageData?.content || [];
+  const roomsTotalPages = roomsPageData?.totalPages || 0;
+
+  // Fetch all rooms for select dropdowns
+  const { data: allRoomsData } = useQuery({
+    queryKey: ['rooms', 'all-for-select'],
+    queryFn: async () => {
+      const response = await apiClient.get('/room/all?page=0&size=1000');
       return response.data?.data?.content || [];
     }
   });
@@ -209,7 +226,7 @@ export const Rooms: React.FC = () => {
   const { data: buildings } = useQuery({
     queryKey: ['buildings', 'list'],
     queryFn: async () => {
-      const response = await apiClient.get('/building/all?page=0&size=100');
+      const response = await apiClient.get('/building/all?page=0&size=24');
       return response.data?.data?.content || [];
     }
   });
@@ -218,7 +235,7 @@ export const Rooms: React.FC = () => {
   const { data: equipmentsList } = useQuery({
     queryKey: ['equipments', 'list'],
     queryFn: async () => {
-      const response = await apiClient.get('/equipment/all?page=0&size=100');
+      const response = await apiClient.get('/equipment/all?page=0&size=24');
       return response.data?.data?.content || [];
     }
   });
@@ -319,7 +336,7 @@ export const Rooms: React.FC = () => {
   const watchedUnavailEnd = unavailWatch('end');
 
   // Query to fetch overlapping bookings for unavailability creation
-  const { data: overlappingBookings, isFetching: isOverlappingLoading } = useQuery({
+  const { data: overlappingBookings, isFetching: isOverlappingLoading, refetch: checkOverlapping } = useQuery({
     queryKey: ['unavail-overlap', watchedUnavailRoomId, watchedUnavailStart, watchedUnavailEnd],
     queryFn: async () => {
       if (!watchedUnavailRoomId || !watchedUnavailStart || !watchedUnavailEnd) return [];
@@ -330,8 +347,21 @@ export const Rooms: React.FC = () => {
       });
       return response.data?.data || [];
     },
-    enabled: !!watchedUnavailRoomId && !!watchedUnavailStart && !!watchedUnavailEnd && (activeModal === 'create-unavail' || activeModal === 'edit-unavail')
+    enabled: false
   });
+
+  React.useEffect(() => {
+    setHasCheckedOverlap(false);
+  }, [watchedUnavailRoomId, watchedUnavailStart, watchedUnavailEnd, activeModal]);
+
+  const handleCheckOverlap = async () => {
+    if (!watchedUnavailRoomId || !watchedUnavailStart || !watchedUnavailEnd) {
+      showToast("Vui lòng chọn phòng họp và khoảng thời gian", "info");
+      return;
+    }
+    await checkOverlapping();
+    setHasCheckedOverlap(true);
+  };
 
   // React Hook Form for Equipment CRUD
   const {
@@ -850,7 +880,7 @@ export const Rooms: React.FC = () => {
                 style={{ width: '100%', paddingLeft: '2.5rem' }}
                 placeholder="Tìm theo tên phòng họp..."
                 value={keyword}
-                onChange={(e) => setKeyword(e.target.value)}
+                onChange={(e) => { setKeyword(e.target.value); setRoomPage(0); }}
               />
             </div>
 
@@ -882,6 +912,7 @@ export const Rooms: React.FC = () => {
                 value={filterStart}
                 onChange={(e) => {
                   setFilterStart(e.target.value);
+                  setRoomPage(0);
                   if (e.target.value !== '') {
                     setFilterFloor('');
                     setFilterCapacity('');
@@ -899,6 +930,7 @@ export const Rooms: React.FC = () => {
                 value={filterEnd}
                 onChange={(e) => {
                   setFilterEnd(e.target.value);
+                  setRoomPage(0);
                   if (e.target.value !== '') {
                     setFilterFloor('');
                     setFilterCapacity('');
@@ -915,13 +947,13 @@ export const Rooms: React.FC = () => {
               <div className="skeleton" style={{ height: '220px' }} />
               <div className="skeleton" style={{ height: '220px' }} />
             </div>
-          ) : roomsData?.length === 0 ? (
+          ) : roomsList.length === 0 ? (
             <div className="glass-card" style={{ padding: '3rem', textAlign: 'center', color: 'var(--text-tertiary)' }}>
               Không tìm thấy phòng họp nào khớp với bộ lọc của bạn.
             </div>
           ) : (
             <div className="grid-cols-3">
-              {roomsData?.map((room: any) => (
+              {roomsList.map((room: any) => (
                 <div
                   key={room.id}
                   className="glass-card glass-card-hover"
@@ -1020,6 +1052,31 @@ export const Rooms: React.FC = () => {
                   </div>
                 </div>
               ))}
+            </div>
+          )}
+
+          {/* Rooms Pagination */}
+          {roomsTotalPages >= 1 && (
+            <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '0.5rem', marginTop: '1rem' }}>
+              <button
+                className="btn btn-secondary"
+                disabled={roomPage === 0}
+                onClick={() => setRoomPage((p) => Math.max(0, p - 1))}
+                style={{ padding: '6px 12px', fontSize: '0.82rem' }}
+              >
+                Trước
+              </button>
+              <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                Trang {roomPage + 1} / {roomsTotalPages}
+              </span>
+              <button
+                className="btn btn-secondary"
+                disabled={roomPage >= roomsTotalPages - 1}
+                onClick={() => setRoomPage((p) => Math.min(roomsTotalPages - 1, p + 1))}
+                style={{ padding: '6px 12px', fontSize: '0.82rem' }}
+              >
+                Sau
+              </button>
             </div>
           )}
         </>
@@ -1161,7 +1218,7 @@ export const Rooms: React.FC = () => {
                 className="btn btn-primary"
                 onClick={() => {
                   setSelectedUnavail(null);
-                  resetUnavailForm({ roomId: roomsData?.[0]?.id || '', reason: '', start: '', end: '' });
+                  resetUnavailForm({ roomId: allRoomsData?.[0]?.id || '', reason: '', start: '', end: '' });
                   setActiveModal('create-unavail');
                 }}
               >
@@ -1362,7 +1419,7 @@ export const Rooms: React.FC = () => {
               </div>
 
               {/* Unavailability Pagination */}
-              {unavailTotalPages > 1 && (
+              {unavailTotalPages >= 1 && (
                 <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '0.5rem', marginTop: '1rem' }}>
                   <button
                     className="btn btn-secondary"
@@ -1861,7 +1918,7 @@ export const Rooms: React.FC = () => {
                     {...unavailRegister('roomId')}
                   >
                     <option value="">-- Chọn phòng họp --</option>
-                    {roomsData?.map((r: any) => (
+                    {allRoomsData?.map((r: any) => (
                       <option key={r.id} value={r.id}>{r.roomName} ({r.building?.buildingName})</option>
                     ))}
                   </select>
@@ -1914,9 +1971,24 @@ export const Rooms: React.FC = () => {
                 </div>
               </div>
 
-              {/* OVERLAPPING BOOKINGS SECTION */}
+              {/* CHECK OVERLAP BUTTON */}
               {activeModal === 'create-unavail' && watchedUnavailRoomId && watchedUnavailStart && watchedUnavailEnd && (
-                <div style={{ borderTop: '1px solid var(--border-light)', paddingTop: '1rem', marginTop: '0.5rem' }}>
+                <div style={{ marginTop: '0.75rem' }}>
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    onClick={handleCheckOverlap}
+                    disabled={isOverlappingLoading}
+                    style={{ width: '100%', display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '0.5rem', padding: '8px 16px', fontSize: '0.85rem' }}
+                  >
+                    🔍 Kiểm tra lịch trùng
+                  </button>
+                </div>
+              )}
+
+              {/* OVERLAPPING BOOKINGS SECTION */}
+              {activeModal === 'create-unavail' && watchedUnavailRoomId && watchedUnavailStart && watchedUnavailEnd && hasCheckedOverlap && (
+                <div style={{ borderTop: '1px solid var(--border-light)', paddingTop: '1rem', marginTop: '1rem' }}>
                   <span className="form-label" style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 600 }}>
                     Lịch họp bị ảnh hưởng trong khoảng thời gian này
                   </span>
