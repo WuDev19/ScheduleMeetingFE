@@ -200,20 +200,121 @@ const EquipmentRow: React.FC<{
 
 // Zod schemas
 const bookingFormSchema = z.object({
-  title: z.string().min(1, 'Vui lòng nhập tiêu đề cuộc họp'),
+  title: z.string().optional(),
   description: z.string().optional(),
   roomId: z.coerce.number().min(1, 'Vui lòng chọn phòng họp'),
-  start: z.string().min(1, 'Vui lòng chọn thời gian bắt đầu'),
-  end: z.string().min(1, 'Vui lòng chọn thời gian kết thúc'),
-  attendee: z.coerce.number().min(1, 'Số lượng tham gia tối thiểu là 1'),
+  attendee: z.coerce.number().optional(),
   receiversInput: z.string().optional(), // Comma separated emails, will convert to receivers list
   equipments: z.array(z.object({
     equipmentId: z.coerce.number().min(1, 'Chọn thiết bị'),
     quantity: z.coerce.number().min(1, 'Số lượng tối thiểu là 1')
-  })).optional()
-}).refine((data) => new Date(data.start) < new Date(data.end), {
-  message: "Thời gian kết thúc phải diễn ra sau thời gian bắt đầu",
-  path: ["end"]
+  })).optional(),
+
+  // Single booking fields
+  start: z.string().optional(),
+  end: z.string().optional(),
+
+  // Recurring booking fields
+  isRecurring: z.boolean().default(false),
+  recurrenceType: z.enum(['DAILY', 'WEEKLY']).optional(),
+  recurrenceInterval: z.coerce.number().min(1).optional(),
+  startDate: z.string().optional(),
+  endDate: z.string().optional(),
+  meetingStartTime: z.string().optional(),
+  meetingEndTime: z.string().optional(),
+  dayOfWeeks: z.array(z.string()).optional()
+}).superRefine((data, ctx) => {
+  if (!data.isRecurring) {
+    if (!data.title || data.title.trim().length === 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Vui lòng nhập tiêu đề cuộc họp",
+        path: ["title"]
+      });
+    }
+    if (data.attendee === undefined || isNaN(Number(data.attendee)) || Number(data.attendee) < 1) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Số lượng tham gia tối thiểu là 1",
+        path: ["attendee"]
+      });
+    }
+    if (!data.start) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Vui lòng chọn thời gian bắt đầu",
+        path: ["start"]
+      });
+    }
+    if (!data.end) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Vui lòng chọn thời gian kết thúc",
+        path: ["end"]
+      });
+    }
+    if (data.start && data.end && new Date(data.start) >= new Date(data.end)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Thời gian kết thúc phải diễn ra sau thời gian bắt đầu",
+        path: ["end"]
+      });
+    }
+  } else {
+    if (!data.startDate) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Vui lòng chọn ngày bắt đầu",
+        path: ["startDate"]
+      });
+    }
+    if (!data.endDate) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Vui lòng chọn ngày kết thúc",
+        path: ["endDate"]
+      });
+    }
+    if (data.startDate && data.endDate && new Date(data.startDate) > new Date(data.endDate)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Ngày kết thúc phải lớn hơn hoặc bằng ngày bắt đầu",
+        path: ["endDate"]
+      });
+    }
+    if (!data.meetingStartTime) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Vui lòng chọn giờ bắt đầu",
+        path: ["meetingStartTime"]
+      });
+    }
+    if (!data.meetingEndTime) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Vui lòng chọn giờ kết thúc",
+        path: ["meetingEndTime"]
+      });
+    }
+    if (data.meetingStartTime && data.meetingEndTime) {
+      const startT = data.meetingStartTime;
+      const endT = data.meetingEndTime;
+      if (startT >= endT) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "Giờ kết thúc phải diễn ra sau giờ bắt đầu",
+          path: ["meetingEndTime"]
+        });
+      }
+    }
+    if (data.recurrenceType === 'WEEKLY' && (!data.dayOfWeeks || data.dayOfWeeks.length === 0)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Vui lòng chọn ít nhất một thứ trong tuần",
+        path: ["dayOfWeeks"]
+      });
+    }
+  }
 });
 
 type BookingFormValues = z.infer<typeof bookingFormSchema>;
@@ -258,10 +359,16 @@ export const Bookings: React.FC = () => {
 
   // Sub-tabs for Approver
   const isApprover = hasAuthority('BOOKING:APPROVE');
-  const [activeSubTab, setActiveSubTab] = useState<'scheduler' | 'approvals'>('scheduler');
+  const canManageRecurring = hasAuthority('RECURRING_BOOKING:MANAGE');
+  const canApproveRecurring = hasAuthority('RECURRING_BOOKING:APPROVE');
+  const canViewAllRecurring = hasAuthority('RECURRING_BOOKING:VIEW_ALL');
+  const canViewRecurring = hasAuthority('RECURRING_BOOKING:VIEW');
+  const hasRecurringAccess = canManageRecurring || canApproveRecurring || canViewAllRecurring || canViewRecurring;
+
+  const [activeSubTab, setActiveSubTab] = useState<'scheduler' | 'approvals' | 'recurrings'>('scheduler');
 
   // Modals state
-  const [activeModal, setActiveModal] = useState<'create' | 'detail' | 'edit' | 'approval-detail' | 'add-equipment' | null>(null);
+  const [activeModal, setActiveModal] = useState<'create' | 'detail' | 'edit' | 'approval-detail' | 'add-equipment' | 'create-recurring' | null>(null);
   const [addEquipRows, setAddEquipRows] = useState<{ equipmentId: number; quantity: number; action: 'ADD' | 'DELETE' }[]>([]);
   const [selectedBooking, setSelectedBooking] = useState<any>(null);
   const [selectedHistory, setSelectedHistory] = useState<any>(null);
@@ -277,6 +384,98 @@ export const Bookings: React.FC = () => {
       return response.data?.data?.content || [];
     },
     enabled: isApprover,
+  });
+
+  // Email suggestions pagination & data state
+  const [emailPage, setEmailPage] = useState(0);
+  const [emailPageSize] = useState(5);
+  const [showEmailSuggestions, setShowEmailSuggestions] = useState(false);
+  const emailSuggestionsRef = React.useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (emailSuggestionsRef.current && !emailSuggestionsRef.current.contains(event.target as Node)) {
+        setShowEmailSuggestions(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, []);
+
+  const { data: emailSuggestionsData } = useQuery({
+    queryKey: ['email-suggestions', emailPage, emailPageSize],
+    queryFn: async () => {
+      const response = await apiClient.get(`/user/name-and-email?page=${emailPage}&size=${emailPageSize}`);
+      return response.data?.data;
+    },
+    enabled: activeModal === 'create'
+  });
+
+  const emailSuggestions = emailSuggestionsData?.content || [];
+  const emailTotalPages = emailSuggestionsData?.totalPages || 0;
+
+  const handleSelectEmail = (selectedEmail: string) => {
+    const currentVal = watch('receiversInput') || '';
+    const emails = currentVal.split(',').map(e => e.trim()).filter(Boolean);
+    if (!emails.includes(selectedEmail)) {
+      emails.push(selectedEmail);
+    }
+    setValue('receiversInput', emails.join(', ') + (emails.length > 0 ? ', ' : ''));
+  };
+
+  // Recurring Patterns tab states
+  const [recurringPage, setRecurringPage] = useState(0);
+  const [recurringPageSize] = useState(10);
+  const [recurringFilterStatus, setRecurringFilterStatus] = useState<string>('');
+  const [recurringFilterType, setRecurringFilterType] = useState<string>('');
+  const [recurringFilterStartDate, setRecurringFilterStartDate] = useState<string>('');
+  const [recurringFilterEndDate, setRecurringFilterEndDate] = useState<string>('');
+  const [showMyRecurringOnly, setShowMyRecurringOnly] = useState(!isApprover && !canApproveRecurring);
+
+  // Fetch Recurring Patterns list
+  const { data: recurringData, isLoading: isRecurringLoading } = useQuery({
+    queryKey: [
+      'recurring-patterns',
+      showMyRecurringOnly,
+      recurringPage,
+      recurringFilterStatus,
+      recurringFilterType,
+      recurringFilterStartDate,
+      recurringFilterEndDate
+    ],
+    queryFn: async () => {
+      let url = `/recurring-pattern/filter?page=${recurringPage}&size=${recurringPageSize}`;
+      const params: string[] = [];
+      if (recurringFilterStatus) params.push(`status=${recurringFilterStatus}`);
+      if (recurringFilterType) params.push(`recurrenceType=${recurringFilterType}`);
+      if (recurringFilterStartDate) params.push(`startDate=${recurringFilterStartDate}`);
+      if (recurringFilterEndDate) params.push(`endDate=${recurringFilterEndDate}`);
+      if (showMyRecurringOnly && user?.id) {
+        params.push(`userCreatedId=${user.id}`);
+      }
+      if (params.length > 0) {
+        url += `&${params.join('&')}`;
+      }
+      const response = await apiClient.get(url);
+      return response.data?.data;
+    },
+    enabled: hasRecurringAccess && activeSubTab === 'recurrings'
+  });
+
+  const recurringList = recurringData?.content || [];
+  const recurringTotalPages = recurringData?.totalPages || 0;
+
+  // Fetch pending recurring patterns count for Admin Badge
+  const { data: pendingRecurringsCount = 0 } = useQuery({
+    queryKey: ['recurring-patterns', 'pending-count'],
+    queryFn: async () => {
+      if (!canApproveRecurring && !canViewAllRecurring) return 0;
+      const response = await apiClient.get('/recurring-pattern/all?page=0&size=1');
+      return response.data?.data?.totalElements || 0;
+    },
+    enabled: canApproveRecurring || canViewAllRecurring
   });
 
   // 1. Fetch Rooms for dropdowns
@@ -309,16 +508,19 @@ export const Bookings: React.FC = () => {
         try {
           const unavailResponse = await apiClient.get('/unavailability-room/all?isDeleted=false&page=0&size=1000');
           const unavailList = unavailResponse.data?.data?.content || [];
-          const mappedUnavail = unavailList.map((un: any) => ({
-            id: `unavail-${un.unId}`,
-            title: `[BẬN/BẢO TRÌ] ${un.reason}`,
-            startTime: un.start,
-            endTime: un.end,
-            roomName: un.room?.roomName || 'Phòng họp',
-            roomId: un.room?.id,
-            status: 'UNAVAILABLE',
-            isUnavailability: true
-          }));
+          const now = new Date();
+          const mappedUnavail = unavailList
+            .filter((un: any) => new Date(un.end) >= now)
+            .map((un: any) => ({
+              id: `unavail-${un.unId}`,
+              title: `[BẬN/BẢO TRÌ] ${un.reason}`,
+              startTime: un.start,
+              endTime: un.end,
+              roomName: un.room?.roomName || 'Phòng họp',
+              roomId: un.room?.id,
+              status: 'UNAVAILABLE',
+              isUnavailability: true
+            }));
           result = [...result, ...mappedUnavail];
         } catch (error) {
           console.error("Error fetching unavailabilities for calendar:", error);
@@ -378,11 +580,21 @@ export const Bookings: React.FC = () => {
     handleSubmit,
     reset,
     control,
+    watch,
+    setValue,
     formState: { errors }
   } = useForm<BookingFormValues>({
     resolver: zodResolver(bookingFormSchema) as any,
-    defaultValues: { equipments: [] }
+    defaultValues: {
+      equipments: [],
+      isRecurring: false,
+      recurrenceType: 'DAILY',
+      recurrenceInterval: 1,
+      dayOfWeeks: []
+    }
   });
+
+  const watchedRecurrenceType = watch('recurrenceType');
 
   const { fields, append, remove } = useFieldArray({
     control,
@@ -401,29 +613,61 @@ export const Bookings: React.FC = () => {
   // CREATE BOOKING MUTATION
   const createBookingMutation = useMutation({
     mutationFn: async (data: BookingFormValues) => {
-      const startDateTime = formatDateTimeForApi(data.start);
-      const endDateTime = formatDateTimeForApi(data.end);
-      // Split email receivers list
-      const receivers = data.receiversInput
-        ? data.receiversInput.split(',').map((e) => e.trim()).filter((e) => e.length > 0)
-        : [];
+      if (data.isRecurring) {
+        const formatLocalTimeForApi = (timeStr: string | undefined): string => {
+          if (!timeStr) return '';
+          if (timeStr.length === 5) {
+            return `${timeStr}:00`;
+          }
+          return timeStr;
+        };
 
-      const payload = {
-        roomId: data.roomId,
-        title: data.title,
-        description: data.description || '',
-        start: startDateTime,
-        end: endDateTime,
-        attendee: data.attendee,
-        equipments: data.equipments || [],
-        receivers
-      };
+        const dayOfWeeksStr = data.dayOfWeeks && data.dayOfWeeks.length > 0
+          ? data.dayOfWeeks.join(',')
+          : undefined;
 
-      await apiClient.post('/booking', payload);
+        const payload = {
+          type: data.recurrenceType,
+          interval: Number(data.recurrenceInterval) || 1,
+          dayOfWeeks: data.recurrenceType === 'WEEKLY' ? dayOfWeeksStr : undefined,
+          startDate: data.startDate,
+          endDate: data.endDate,
+          meetingStartTime: formatLocalTimeForApi(data.meetingStartTime),
+          meetingEndTime: formatLocalTimeForApi(data.meetingEndTime),
+          roomId: Number(data.roomId)
+        };
+
+        await apiClient.post('/recurring-pattern', payload);
+      } else {
+        const startDateTime = formatDateTimeForApi(data.start || '');
+        const endDateTime = formatDateTimeForApi(data.end || '');
+        // Split email receivers list
+        const receivers = data.receiversInput
+          ? data.receiversInput.split(',').map((e) => e.trim()).filter((e) => e.length > 0)
+          : [];
+
+        const payload = {
+          roomId: data.roomId,
+          title: data.title,
+          description: data.description || '',
+          start: startDateTime,
+          end: endDateTime,
+          attendee: data.attendee,
+          equipments: data.equipments || [],
+          receivers
+        };
+
+        await apiClient.post('/booking', payload);
+      }
     },
-    onSuccess: () => {
+    onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ['bookings'] });
-      showToast('Đăng ký lịch họp thành công, chờ người duyệt', 'success');
+      queryClient.invalidateQueries({ queryKey: ['recurring-patterns'] });
+      if (variables.isRecurring) {
+        showToast('Đặt lịch họp định kỳ thành công, chờ người duyệt', 'success');
+      } else {
+        showToast('Đăng ký lịch họp thành công, chờ người duyệt', 'success');
+      }
       setActiveModal(null);
       reset();
     },
@@ -481,6 +725,59 @@ export const Bookings: React.FC = () => {
   const onEditSubmit = (data: EditBookingFormValues) => {
     updateBookingMutation.mutate(data);
   };
+
+  // Recurring pattern mutation states
+  const [recurringCancelId, setRecurringCancelId] = useState<number | null>(null);
+  const [recurringCancelReason, setRecurringCancelReason] = useState('');
+  const [showRecurringCancelModal, setShowRecurringCancelModal] = useState(false);
+
+  const [recurringApproveId, setRecurringApproveId] = useState<number | null>(null);
+  const [recurringApproveStatus, setRecurringApproveStatus] = useState<'APPROVED' | 'REJECTED'>('APPROVED');
+  const [recurringApproveReason, setRecurringApproveReason] = useState('');
+  const [showRecurringApproveModal, setShowRecurringApproveModal] = useState(false);
+
+  // Mutation to cancel a recurring pattern
+  const cancelRecurringMutation = useMutation({
+    mutationFn: async ({ id, reason }: { id: number; reason: string }) => {
+      await apiClient.patch(`/recurring-pattern/cancel/${id}`, { reason });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['recurring-patterns'] });
+      queryClient.invalidateQueries({ queryKey: ['bookings'] });
+      showToast('Hủy chuỗi lịch họp định kỳ thành công', 'success');
+      setShowRecurringCancelModal(false);
+      setRecurringCancelId(null);
+      setRecurringCancelReason('');
+    },
+    onError: (err: any) => {
+      const msg = err.response?.data?.message || 'Có lỗi xảy ra khi hủy lịch định kỳ';
+      showToast(msg, 'error');
+    }
+  });
+
+  // Mutation to approve or reject a recurring pattern
+  const approveRejectRecurringMutation = useMutation({
+    mutationFn: async ({ id, status, reason }: { id: number; status: 'APPROVED' | 'REJECTED'; reason?: string }) => {
+      await apiClient.patch(`/recurring-pattern/approve/${id}`, { status, reason });
+    },
+    onSuccess: (_, variables) => {
+      queryClient.invalidateQueries({ queryKey: ['recurring-patterns'] });
+      queryClient.invalidateQueries({ queryKey: ['bookings'] });
+      showToast(
+        variables.status === 'APPROVED'
+          ? 'Phê duyệt chuỗi lịch định kỳ thành công'
+          : 'Đã từ chối chuỗi lịch định kỳ',
+        'success'
+      );
+      setShowRecurringApproveModal(false);
+      setRecurringApproveId(null);
+      setRecurringApproveReason('');
+    },
+    onError: (err: any) => {
+      const msg = err.response?.data?.message || 'Có lỗi xảy ra khi xử lý duyệt lịch định kỳ';
+      showToast(msg, 'error');
+    }
+  });
 
   // CANCEL BOOKING MUTATION
   const cancelBookingMutation = useMutation({
@@ -826,6 +1123,252 @@ export const Bookings: React.FC = () => {
             </div>
           );
         })}
+      </div>
+    );
+  };
+
+  const renderRecurringList = () => {
+    return (
+      <div className="glass-card" style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem' }}>
+          <div>
+            <h3 style={{ fontSize: '1.25rem', fontWeight: 700, margin: 0 }}>Danh Sách Lịch Họp Định Kỳ</h3>
+            <p style={{ color: 'var(--text-tertiary)', fontSize: '0.82rem', margin: '4px 0 0 0' }}>Xem thông tin chuỗi lịch họp lặp lại hàng ngày / hàng tuần</p>
+          </div>
+
+          <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', flexWrap: 'wrap' }}>
+            {(canApproveRecurring || canViewAllRecurring) && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', marginRight: '0.5rem' }}>
+                <input
+                  id="toggle-my-recurrings"
+                  type="checkbox"
+                  checked={showMyRecurringOnly}
+                  onChange={(e) => {
+                    setShowMyRecurringOnly(e.target.checked);
+                    setRecurringPage(0);
+                  }}
+                  style={{ width: '16px', height: '16px', cursor: 'pointer' }}
+                />
+                <label htmlFor="toggle-my-recurrings" style={{ fontSize: '0.85rem', cursor: 'pointer', color: 'var(--text-secondary)', fontWeight: 600 }}>
+                  Chỉ xem lịch của tôi
+                </label>
+              </div>
+            )}
+
+            <select
+              className="form-control"
+              style={{ width: '160px', fontSize: '0.8rem', padding: '4px 8px', height: '32px' }}
+              value={recurringFilterStatus}
+              onChange={(e) => {
+                setRecurringFilterStatus(e.target.value);
+                setRecurringPage(0);
+              }}
+            >
+              <option value="">-- Tất cả trạng thái --</option>
+              <option value="PENDING">Chờ duyệt</option>
+              <option value="APPROVED">Đã duyệt</option>
+              <option value="REJECTED">Từ chối</option>
+              <option value="CANCELLED">Đã hủy</option>
+            </select>
+
+            <select
+              className="form-control"
+              style={{ width: '150px', fontSize: '0.8rem', padding: '4px 8px', height: '32px' }}
+              value={recurringFilterType}
+              onChange={(e) => {
+                setRecurringFilterType(e.target.value);
+                setRecurringPage(0);
+              }}
+            >
+              <option value="">-- Tất cả kiểu lặp --</option>
+              <option value="DAILY">Hàng ngày</option>
+              <option value="WEEKLY">Hàng tuần</option>
+            </select>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+              <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Từ:</span>
+              <input
+                type="date"
+                className="form-control"
+                style={{ width: '135px', fontSize: '0.8rem', padding: '4px 8px', height: '32px' }}
+                value={recurringFilterStartDate}
+                onChange={(e) => {
+                  setRecurringFilterStartDate(e.target.value);
+                  setRecurringPage(0);
+                }}
+              />
+            </div>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+              <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Đến:</span>
+              <input
+                type="date"
+                className="form-control"
+                style={{ width: '135px', fontSize: '0.8rem', padding: '4px 8px', height: '32px' }}
+                value={recurringFilterEndDate}
+                onChange={(e) => {
+                  setRecurringFilterEndDate(e.target.value);
+                  setRecurringPage(0);
+                }}
+              />
+            </div>
+          </div>
+        </div>
+
+        {isRecurringLoading ? (
+          <div style={{ padding: '3rem', textAlign: 'center', color: 'var(--text-tertiary)' }}>
+            <div className="spinner" style={{ width: '20px', height: '20px', margin: '0 auto 10px auto', border: '3px solid var(--border-light)', borderTopColor: 'var(--accent)', borderRadius: '50%', animation: 'spin 1s linear infinite' }} />
+            Đang tải danh sách lịch định kỳ...
+          </div>
+        ) : recurringList.length === 0 ? (
+          <div className="glass-card" style={{ padding: '3rem', textAlign: 'center', color: 'var(--text-tertiary)', backgroundColor: 'var(--bg-tertiary)' }}>
+            Không tìm thấy lịch họp định kỳ nào khớp với bộ lọc.
+          </div>
+        ) : (
+          <div className="table-responsive" style={{ overflowX: 'auto' }}>
+            <table className="table" style={{ width: '100%', borderCollapse: 'collapse', minWidth: '800px' }}>
+              <thead>
+                <tr style={{ borderBottom: '1px solid var(--border-light)', textAlign: 'left', backgroundColor: 'rgba(0,0,0,0.01)' }}>
+                  <th style={{ padding: '0.75rem 0.5rem', fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-tertiary)' }}>Mã</th>
+                  <th style={{ padding: '0.75rem 0.5rem', fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-tertiary)' }}>Kiểu lặp</th>
+                  <th style={{ padding: '0.75rem 0.5rem', fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-tertiary)' }}>Tần suất</th>
+                  <th style={{ padding: '0.75rem 0.5rem', fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-tertiary)' }}>Ngày lặp</th>
+                  <th style={{ padding: '0.75rem 0.5rem', fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-tertiary)' }}>Khung giờ</th>
+                  <th style={{ padding: '0.75rem 0.5rem', fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-tertiary)' }}>Thời hạn hiệu lực</th>
+                  <th style={{ padding: '0.75rem 0.5rem', fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-tertiary)' }}>Người tạo</th>
+                  <th style={{ padding: '0.75rem 0.5rem', fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-tertiary)' }}>Trạng thái</th>
+                  <th style={{ padding: '0.75rem 0.5rem', fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-tertiary)', textAlign: 'right' }}>Hành động</th>
+                </tr>
+              </thead>
+              <tbody>
+                {recurringList.map((item: any) => {
+                  const daysMap: Record<string, string> = {
+                    MONDAY: 'T2',
+                    TUESDAY: 'T3',
+                    WEDNESDAY: 'T4',
+                    THURSDAY: 'T5',
+                    FRIDAY: 'T6',
+                    SATURDAY: 'T7',
+                    SUNDAY: 'CN'
+                  };
+                  const daysFormatted = item.daysOfWeek
+                    ? item.daysOfWeek.split(',').map((d: string) => daysMap[d.trim()] || d).join(', ')
+                    : '-';
+
+                  return (
+                    <tr key={item.recurringId} style={{ borderBottom: '1px solid var(--border-light)' }} className="table-row-hover">
+                      <td style={{ padding: '0.75rem 0.5rem', fontSize: '0.8rem', fontWeight: 600 }}>#{item.recurringId}</td>
+                      <td style={{ padding: '0.75rem 0.5rem', fontSize: '0.8rem' }}>
+                        {item.recurrenceType === 'DAILY' ? 'Hàng ngày' : 'Hàng tuần'}
+                      </td>
+                      <td style={{ padding: '0.75rem 0.5rem', fontSize: '0.8rem' }}>
+                        {`Lặp mỗi ${item.interval} ${item.recurrenceType === 'DAILY' ? 'ngày' : 'tuần'}`}
+                      </td>
+                      <td style={{ padding: '0.75rem 0.5rem', fontSize: '0.8rem', color: 'var(--accent)', fontWeight: 600 }}>
+                        {daysFormatted}
+                      </td>
+                      <td style={{ padding: '0.75rem 0.5rem', fontSize: '0.8rem' }}>
+                        {item.bookings?.[0]
+                          ? `${formatTime(item.bookings[0].startTime)} – ${formatTime(item.bookings[0].endTime)}`
+                          : '-'}
+                      </td>
+                      <td style={{ padding: '0.75rem 0.5rem', fontSize: '0.8rem' }}>
+                        {new Date(item.startDate).toLocaleDateString('vi-VN')} – {new Date(item.endDate).toLocaleDateString('vi-VN')}
+                      </td>
+                      <td style={{ padding: '0.75rem 0.5rem', fontSize: '0.8rem', fontWeight: 500 }}>
+                        {item.userCreatedName || `ID: ${item.userCreatedId}`}
+                      </td>
+                      <td style={{ padding: '0.75rem 0.5rem' }}>
+                        <span className={`badge ${item.status === 'APPROVED' ? 'badge-approved' :
+                          item.status === 'PENDING' ? 'badge-pending' :
+                            item.status === 'REJECTED' ? 'badge-rejected' : 'badge-cancelled'
+                          }`} style={{ fontSize: '0.7rem', padding: '3px 6px' }}>
+                          {item.status === 'APPROVED' ? 'Đã duyệt' :
+                            item.status === 'PENDING' ? 'Chờ duyệt' :
+                              item.status === 'REJECTED' ? 'Từ chối' : 'Đã hủy'}
+                        </span>
+                      </td>
+                      <td style={{ padding: '0.75rem 0.5rem', textAlign: 'right' }}>
+                        <div style={{ display: 'flex', gap: '0.35rem', justifyContent: 'flex-end' }}>
+                          {item.status === 'PENDING' && canApproveRecurring && (
+                            <button
+                              type="button"
+                              className="btn"
+                              style={{ padding: '4px 8px', fontSize: '0.75rem', backgroundColor: 'var(--success)', color: '#fff', border: 'none' }}
+                              onClick={() => {
+                                setRecurringApproveId(item.recurringId);
+                                setRecurringApproveStatus('APPROVED');
+                                setRecurringApproveReason('');
+                                setShowRecurringApproveModal(true);
+                              }}
+                            >
+                              Duyệt
+                            </button>
+                          )}
+                          {item.status === 'PENDING' && canApproveRecurring && (
+                            <button
+                              type="button"
+                              className="btn btn-danger"
+                              style={{ padding: '4px 8px', fontSize: '0.75rem', border: 'none' }}
+                              onClick={() => {
+                                setRecurringApproveId(item.recurringId);
+                                setRecurringApproveStatus('REJECTED');
+                                setRecurringApproveReason('');
+                                setShowRecurringApproveModal(true);
+                              }}
+                            >
+                              Từ chối
+                            </button>
+                          )}
+                          {item.status !== 'CANCELLED' && item.status !== 'REJECTED' && Number(item.userCreatedId) === Number(user?.id) && (
+                            <button
+                              type="button"
+                              className="btn btn-ghost"
+                              style={{ padding: '4px 8px', fontSize: '0.75rem', color: 'var(--danger)', border: '1px solid rgba(239, 68, 68, 0.2)' }}
+                              onClick={() => {
+                                setRecurringCancelId(item.recurringId);
+                                setRecurringCancelReason('');
+                                setShowRecurringCancelModal(true);
+                              }}
+                            >
+                              Hủy lịch
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {recurringTotalPages >= 1 && (
+          <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '0.5rem', marginTop: '1rem' }}>
+            <button
+              type="button"
+              className="btn btn-secondary"
+              disabled={recurringPage === 0}
+              onClick={() => setRecurringPage((p) => Math.max(0, p - 1))}
+              style={{ padding: '6px 12px', fontSize: '0.82rem' }}
+            >
+              Trước
+            </button>
+            <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+              Trang {recurringPage + 1} / {recurringTotalPages}
+            </span>
+            <button
+              type="button"
+              className="btn btn-secondary"
+              disabled={recurringPage >= recurringTotalPages - 1}
+              onClick={() => setRecurringPage((p) => Math.min(recurringTotalPages - 1, p + 1))}
+              style={{ padding: '6px 12px', fontSize: '0.82rem' }}
+            >
+              Sau
+            </button>
+          </div>
+        )}
       </div>
     );
   };
@@ -1440,7 +1983,7 @@ export const Bookings: React.FC = () => {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
 
-      {isApprover && (
+      {(isApprover || hasRecurringAccess) && (
         <div style={{ display: 'flex', gap: '0.5rem', borderBottom: '1px solid var(--border-light)', paddingBottom: '0.5rem', marginBottom: '-0.5rem' }}>
           <button
             className={`btn ${activeSubTab === 'scheduler' ? 'btn-primary' : 'btn-ghost'}`}
@@ -1449,26 +1992,53 @@ export const Bookings: React.FC = () => {
           >
             <CalendarIcon size={16} /> Lịch trình & Tra cứu
           </button>
-          <button
-            className={`btn ${activeSubTab === 'approvals' ? 'btn-primary' : 'btn-ghost'}`}
-            style={{ fontSize: '0.9rem', padding: '0.5rem 1rem', display: 'flex', alignItems: 'center', gap: '6px' }}
-            onClick={() => setActiveSubTab('approvals')}
-          >
-            <UserCheck size={16} /> Phê duyệt yêu cầu
-            {pendingApprovals && pendingApprovals.length > 0 && (
-              <span style={{
-                backgroundColor: 'var(--danger)',
-                color: '#fff',
-                fontSize: '0.7rem',
-                fontWeight: 700,
-                padding: '2px 6px',
-                borderRadius: '10px',
-                lineHeight: 1
-              }}>
-                {pendingApprovals.length}
-              </span>
-            )}
-          </button>
+          {hasRecurringAccess && (
+            <button
+              className={`btn ${activeSubTab === 'recurrings' ? 'btn-primary' : 'btn-ghost'}`}
+              style={{ fontSize: '0.9rem', padding: '0.5rem 1rem', display: 'flex', alignItems: 'center', gap: '6px' }}
+              onClick={() => {
+                setActiveSubTab('recurrings');
+                setRecurringPage(0);
+              }}
+            >
+              <Clock size={16} /> Lịch định kỳ
+              {(canApproveRecurring || canViewAllRecurring) && pendingRecurringsCount > 0 && (
+                <span style={{
+                  backgroundColor: 'var(--danger)',
+                  color: '#fff',
+                  fontSize: '0.7rem',
+                  fontWeight: 700,
+                  padding: '2px 6px',
+                  borderRadius: '10px',
+                  lineHeight: 1
+                }}>
+                  {pendingRecurringsCount}
+                </span>
+              )}
+            </button>
+          )}
+          {isApprover && (
+            <button
+              className={`btn ${activeSubTab === 'approvals' ? 'btn-primary' : 'btn-ghost'}`}
+              style={{ fontSize: '0.9rem', padding: '0.5rem 1rem', display: 'flex', alignItems: 'center', gap: '6px' }}
+              onClick={() => setActiveSubTab('approvals')}
+            >
+              <UserCheck size={16} /> Phê duyệt yêu cầu
+              {pendingApprovals && pendingApprovals.length > 0 && (
+                <span style={{
+                  backgroundColor: 'var(--danger)',
+                  color: '#fff',
+                  fontSize: '0.7rem',
+                  fontWeight: 700,
+                  padding: '2px 6px',
+                  borderRadius: '10px',
+                  lineHeight: 1
+                }}>
+                  {pendingApprovals.length}
+                </span>
+              )}
+            </button>
+          )}
         </div>
       )}
 
@@ -1483,10 +2053,30 @@ export const Bookings: React.FC = () => {
           <button className="btn btn-secondary" onClick={handleExportExcel}>
             <FileSpreadsheet size={16} /> Xuất Excel
           </button>
+          {canManageRecurring && (
+            <button
+              className="btn"
+              style={{ backgroundColor: 'var(--accent)', color: '#fff', display: 'flex', alignItems: 'center', gap: '6px' }}
+              onClick={() => {
+                reset({
+                  isRecurring: true,
+                  recurrenceType: 'DAILY',
+                  recurrenceInterval: 1,
+                  dayOfWeeks: []
+                });
+                setActiveModal('create-recurring');
+              }}
+            >
+              <Clock size={16} /> Đăng ký lịch định kỳ
+            </button>
+          )}
           <button
             className="btn btn-primary"
             onClick={() => {
-              reset();
+              reset({
+                isRecurring: false,
+                equipments: []
+              });
               setActiveModal('create');
             }}
           >
@@ -1819,6 +2409,8 @@ export const Bookings: React.FC = () => {
             );
           })()}
         </div>
+      ) : activeSubTab === 'recurrings' ? (
+        renderRecurringList()
       ) : (
         renderApprovalsList()
       )}
@@ -1910,20 +2502,110 @@ export const Bookings: React.FC = () => {
               </div>
 
               {/* Receivers emails invite */}
-              <div className="form-group">
+              <div className="form-group" style={{ position: 'relative' }} ref={emailSuggestionsRef}>
                 <label className="form-label" htmlFor="book-receivers">Mời đại biểu tham dự (Email cách nhau bởi dấu phẩy)</label>
                 <div style={{ position: 'relative' }}>
-                  <span style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-tertiary)' }}>
+                  <span style={{ position: 'absolute', left: '12px', top: '10px', color: 'var(--text-tertiary)' }}>
                     <Mail size={16} />
                   </span>
-                  <input
+                  <textarea
                     id="book-receivers"
                     className="form-control"
-                    style={{ width: '100%', paddingLeft: '2.5rem' }}
+                    style={{ width: '100%', paddingLeft: '2.5rem', paddingTop: '8px', minHeight: '80px', resize: 'vertical' }}
                     placeholder="partner@company.com, ceo@company.com"
                     {...register('receiversInput')}
+                    onFocus={() => setShowEmailSuggestions(true)}
                   />
                 </div>
+
+                {/* Email suggestions dropdown */}
+                {showEmailSuggestions && (
+                  <div
+                    className="glass-card"
+                    style={{
+                      position: 'absolute',
+                      top: '100%',
+                      left: 0,
+                      right: 0,
+                      zIndex: 100,
+                      marginTop: '4px',
+                      boxShadow: '0 8px 24px rgba(0,0,0,0.15)',
+                      border: '1px solid var(--border-light)',
+                      backgroundColor: 'var(--bg-primary)',
+                      padding: '0.5rem',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '2px',
+                      maxHeight: '250px',
+                      overflowY: 'auto'
+                    }}
+                  >
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '4px 8px', borderBottom: '1px solid var(--border-light)', marginBottom: '4px' }}>
+                      <span style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)' }}>Gợi ý email người tham gia</span>
+                      <button
+                        type="button"
+                        className="btn btn-ghost"
+                        style={{ padding: '2px', minWidth: 'auto', color: 'var(--text-tertiary)' }}
+                        onClick={() => setShowEmailSuggestions(false)}
+                      >
+                        <X size={14} />
+                      </button>
+                    </div>
+
+                    {emailSuggestions.length === 0 ? (
+                      <span style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)', padding: '8px', textAlign: 'center' }}>Không có tài khoản gợi ý</span>
+                    ) : (
+                      emailSuggestions.map((item: any) => (
+                        <div
+                          key={item.email}
+                          onClick={() => handleSelectEmail(item.email)}
+                          style={{
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            alignItems: 'center',
+                            padding: '6px 8px',
+                            borderRadius: 'var(--radius-sm)',
+                            cursor: 'pointer',
+                            transition: 'background 0.2s',
+                            fontSize: '0.8rem'
+                          }}
+                          onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'var(--bg-tertiary)'}
+                          onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
+                        >
+                          <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{item.fullName}</span>
+                          <span style={{ color: 'var(--accent)', fontSize: '0.75rem' }}>{item.email}</span>
+                        </div>
+                      ))
+                    )}
+
+                    {/* Dropdown pagination footer */}
+                    {emailTotalPages >= 1 && (
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '4px 8px', borderTop: '1px solid var(--border-light)', marginTop: '4px' }}>
+                        <button
+                          type="button"
+                          className="btn btn-secondary"
+                          disabled={emailPage === 0}
+                          onClick={() => setEmailPage(p => Math.max(0, p - 1))}
+                          style={{ padding: '2px 8px', fontSize: '0.72rem', minWidth: 'auto' }}
+                        >
+                          Trước
+                        </button>
+                        <span style={{ fontSize: '0.72rem', color: 'var(--text-secondary)' }}>
+                          Trang {emailPage + 1} / {emailTotalPages}
+                        </span>
+                        <button
+                          type="button"
+                          className="btn btn-secondary"
+                          disabled={emailPage >= emailTotalPages - 1}
+                          onClick={() => setEmailPage(p => Math.min(emailTotalPages - 1, p + 1))}
+                          style={{ padding: '2px 8px', fontSize: '0.72rem', minWidth: 'auto' }}
+                        >
+                          Sau
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
 
               {/* Equipment selections */}
@@ -1979,6 +2661,152 @@ export const Bookings: React.FC = () => {
               <button type="button" className="btn btn-secondary" onClick={() => setActiveModal(null)}>Hủy</button>
               <button type="submit" className="btn btn-primary" disabled={createBookingMutation.isPending}>
                 {createBookingMutation.isPending ? 'Đang gửi...' : 'Đăng Ký Đặt Lịch'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {activeModal === 'create-recurring' && (
+        <div className="modal-overlay">
+          <form onSubmit={handleSubmit(onSubmit)} className="modal-content" style={{ maxWidth: '600px' }}>
+            <div className="modal-header">
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <Clock size={20} style={{ color: 'var(--accent)' }} />
+                <h3 style={{ margin: 0, fontSize: '1.15rem' }}>Đăng ký lịch họp định kỳ</h3>
+              </div>
+              <button type="button" className="btn btn-ghost" style={{ padding: '4px', minWidth: 'auto' }} onClick={() => setActiveModal(null)}>
+                <XCircle size={20} />
+              </button>
+            </div>
+
+            <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+              <div className="form-group">
+                <label className="form-label" htmlFor="recur-room">Chọn Phòng họp *</label>
+                <select
+                  id="recur-room"
+                  className="form-control"
+                  {...register('roomId')}
+                >
+                  <option value="">-- Chọn phòng họp --</option>
+                  {rooms?.map((r: any) => (
+                    <option key={r.id} value={r.id}>{r.roomName} (Tầng {r.floorNumber} - {r.capacity} chỗ)</option>
+                  ))}
+                </select>
+                {errors.roomId && <span className="form-error">{errors.roomId.message}</span>}
+              </div>
+
+              <div className="grid-cols-2" style={{ gap: '1rem' }}>
+                <div className="form-group">
+                  <label className="form-label" htmlFor="recur-start-date">Ngày bắt đầu hiệu lực *</label>
+                  <input
+                    id="recur-start-date"
+                    type="date"
+                    className="form-control"
+                    {...register('startDate')}
+                  />
+                  {errors.startDate && <span className="form-error">{errors.startDate.message}</span>}
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label" htmlFor="recur-end-date">Ngày kết thúc hiệu lực *</label>
+                  <input
+                    id="recur-end-date"
+                    type="date"
+                    className="form-control"
+                    {...register('endDate')}
+                  />
+                  {errors.endDate && <span className="form-error">{errors.endDate.message}</span>}
+                </div>
+              </div>
+
+              <div className="grid-cols-2" style={{ gap: '1rem' }}>
+                <div className="form-group">
+                  <label className="form-label" htmlFor="recur-meeting-start-time">Giờ bắt đầu họp *</label>
+                  <input
+                    id="recur-meeting-start-time"
+                    type="time"
+                    className="form-control"
+                    {...register('meetingStartTime')}
+                  />
+                  {errors.meetingStartTime && <span className="form-error">{errors.meetingStartTime.message}</span>}
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label" htmlFor="recur-meeting-end-time">Giờ kết thúc họp *</label>
+                  <input
+                    id="recur-meeting-end-time"
+                    type="time"
+                    className="form-control"
+                    {...register('meetingEndTime')}
+                  />
+                  {errors.meetingEndTime && <span className="form-error">{errors.meetingEndTime.message}</span>}
+                </div>
+              </div>
+
+              <div className="grid-cols-2" style={{ gap: '1rem' }}>
+                <div className="form-group">
+                  <label className="form-label" htmlFor="recur-recurrence-type">Chu kỳ lặp *</label>
+                  <select
+                    id="recur-recurrence-type"
+                    className="form-control"
+                    {...register('recurrenceType')}
+                  >
+                    <option value="DAILY">Hàng ngày (Daily)</option>
+                    <option value="WEEKLY">Hàng tuần (Weekly)</option>
+                  </select>
+                  {errors.recurrenceType && <span className="form-error">{errors.recurrenceType.message}</span>}
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label" htmlFor="recur-recurrence-interval">Tần suất lặp (mỗi N ngày/tuần) *</label>
+                  <input
+                    id="recur-recurrence-interval"
+                    type="number"
+                    min={1}
+                    className="form-control"
+                    {...register('recurrenceInterval')}
+                  />
+                  {errors.recurrenceInterval && <span className="form-error">{errors.recurrenceInterval.message}</span>}
+                </div>
+              </div>
+
+              {watchedRecurrenceType === 'WEEKLY' && (
+                <div className="form-group">
+                  <label className="form-label" style={{ display: 'block', marginBottom: '0.5rem' }}>Chọn các thứ lặp trong tuần *</label>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '1rem' }}>
+                    {[
+                      { label: 'Thứ 2', value: 'MONDAY' },
+                      { label: 'Thứ 3', value: 'TUESDAY' },
+                      { label: 'Thứ 4', value: 'WEDNESDAY' },
+                      { label: 'Thứ 5', value: 'THURSDAY' },
+                      { label: 'Thứ 6', value: 'FRIDAY' },
+                      { label: 'Thứ 7', value: 'SATURDAY' },
+                      { label: 'Chủ nhật', value: 'SUNDAY' }
+                    ].map((day) => (
+                      <div key={day.value} style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                        <input
+                          type="checkbox"
+                          id={`recur-day-${day.value}`}
+                          value={day.value}
+                          style={{ width: '15px', height: '15px', cursor: 'pointer' }}
+                          {...register('dayOfWeeks')}
+                        />
+                        <label htmlFor={`recur-day-${day.value}`} style={{ fontSize: '0.8rem', cursor: 'pointer', color: 'var(--text-secondary)' }}>
+                          {day.label}
+                        </label>
+                      </div>
+                    ))}
+                  </div>
+                  {errors.dayOfWeeks && <span className="form-error" style={{ display: 'block', marginTop: '4px' }}>{errors.dayOfWeeks.message}</span>}
+                </div>
+              )}
+            </div>
+
+            <div className="modal-footer">
+              <button type="button" className="btn btn-secondary" onClick={() => setActiveModal(null)}>Hủy</button>
+              <button type="submit" className="btn" style={{ backgroundColor: 'var(--accent)', color: '#fff' }} disabled={createBookingMutation.isPending}>
+                {createBookingMutation.isPending ? 'Đang gửi...' : 'Đăng Ký Lịch Định Kỳ'}
               </button>
             </div>
           </form>
@@ -3019,6 +3847,150 @@ export const Bookings: React.FC = () => {
                 }}
               >
                 Phê duyệt
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* RECURRING CANCEL MODAL */}
+      {showRecurringCancelModal && recurringCancelId && (
+        <div className="modal-overlay">
+          <div className="modal-content" style={{ maxWidth: '500px' }}>
+            <div className="modal-header">
+              <h3 style={{ margin: 0, fontSize: '1.15rem' }}>Hủy chuỗi lịch họp định kỳ #{recurringCancelId}</h3>
+              <button
+                type="button"
+                className="btn btn-ghost"
+                style={{ padding: '4px', minWidth: 'auto' }}
+                onClick={() => {
+                  setShowRecurringCancelModal(false);
+                  setRecurringCancelId(null);
+                  setRecurringCancelReason('');
+                }}
+              >
+                <XCircle size={20} />
+              </button>
+            </div>
+            <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+              <p style={{ fontSize: '0.88rem', color: 'var(--text-secondary)' }}>
+                Hành động này sẽ hủy toàn bộ các buổi họp trong tương lai thuộc chuỗi lịch họp định kỳ này.
+              </p>
+              <div className="form-group">
+                <label className="form-label" htmlFor="recur-cancel-reason">Lý do hủy *</label>
+                <textarea
+                  id="recur-cancel-reason"
+                  className="form-control"
+                  placeholder="Vui lòng nhập lý do hủy lịch lặp..."
+                  value={recurringCancelReason}
+                  onChange={(e) => setRecurringCancelReason(e.target.value)}
+                  style={{ minHeight: '80px', width: '100%', resize: 'vertical' }}
+                />
+              </div>
+            </div>
+            <div className="modal-footer" style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => {
+                  setShowRecurringCancelModal(false);
+                  setRecurringCancelId(null);
+                  setRecurringCancelReason('');
+                }}
+              >
+                Quay lại
+              </button>
+              <button
+                type="button"
+                className="btn btn-danger"
+                disabled={cancelRecurringMutation.isPending}
+                onClick={() => {
+                  if (!recurringCancelReason.trim()) {
+                    showToast('Vui lòng nhập lý do hủy lịch', 'error');
+                    return;
+                  }
+                  cancelRecurringMutation.mutate({
+                    id: recurringCancelId,
+                    reason: recurringCancelReason.trim()
+                  });
+                }}
+              >
+                {cancelRecurringMutation.isPending ? 'Đang xử lý...' : 'Xác nhận hủy'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* RECURRING APPROVE/REJECT MODAL */}
+      {showRecurringApproveModal && recurringApproveId && (
+        <div className="modal-overlay">
+          <div className="modal-content" style={{ maxWidth: '500px' }}>
+            <div className="modal-header">
+              <h3 style={{ margin: 0, fontSize: '1.15rem' }}>
+                {recurringApproveStatus === 'APPROVED' ? 'Phê duyệt' : 'Từ chối'} chuỗi lịch họp #{recurringApproveId}
+              </h3>
+              <button
+                type="button"
+                className="btn btn-ghost"
+                style={{ padding: '4px', minWidth: 'auto' }}
+                onClick={() => {
+                  setShowRecurringApproveModal(false);
+                  setRecurringApproveId(null);
+                  setRecurringApproveReason('');
+                }}
+              >
+                <XCircle size={20} />
+              </button>
+            </div>
+            <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+              <p style={{ fontSize: '0.88rem', color: 'var(--text-secondary)' }}>
+                Xác nhận {recurringApproveStatus === 'APPROVED' ? 'phê duyệt và tự động tạo các lịch đặt con' : 'từ chối yêu cầu đăng ký'} cho chuỗi lịch họp này.
+              </p>
+              {recurringApproveStatus === 'REJECTED' && (
+                <div className="form-group">
+                  <label className="form-label" htmlFor="recur-approve-reason">Lý do từ chối *</label>
+                  <textarea
+                    id="recur-approve-reason"
+                    className="form-control"
+                    placeholder="Vui lòng nhập lý do từ chối..."
+                    value={recurringApproveReason}
+                    onChange={(e) => setRecurringApproveReason(e.target.value)}
+                    style={{ minHeight: '80px', width: '100%', resize: 'vertical' }}
+                  />
+                </div>
+              )}
+            </div>
+            <div className="modal-footer" style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => {
+                  setShowRecurringApproveModal(false);
+                  setRecurringApproveId(null);
+                  setRecurringApproveReason('');
+                }}
+              >
+                Quay lại
+              </button>
+              <button
+                type="button"
+                className={`btn ${recurringApproveStatus === 'APPROVED' ? 'btn-primary' : 'btn-danger'}`}
+                style={recurringApproveStatus === 'APPROVED' ? { backgroundColor: 'var(--success)', border: 'none', color: '#fff' } : undefined}
+                disabled={approveRejectRecurringMutation.isPending}
+                onClick={() => {
+                  if (recurringApproveStatus === 'REJECTED' && !recurringApproveReason.trim()) {
+                    showToast('Vui lòng nhập lý do từ chối', 'error');
+                    return;
+                  }
+                  approveRejectRecurringMutation.mutate({
+                    id: recurringApproveId,
+                    status: recurringApproveStatus,
+                    reason: recurringApproveStatus === 'REJECTED' ? recurringApproveReason.trim() : undefined
+                  });
+                }}
+              >
+                {approveRejectRecurringMutation.isPending ? 'Đang xử lý...' : 'Xác nhận'}
               </button>
             </div>
           </div>
