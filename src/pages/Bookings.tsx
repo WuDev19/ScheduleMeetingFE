@@ -584,6 +584,49 @@ export const Bookings: React.FC = () => {
     }
   }, [isBookingDetailError]);
 
+  const handleViewHistoryDetail = async (historyId: number) => {
+    try {
+      const response = await apiClient.get(`/booking/pending/detail/${historyId}`);
+      const historyData = response.data?.data;
+      setSelectedHistory(historyData);
+
+      if (historyData?.bookingId) {
+        const detailRes = await apiClient.get(`/booking/${historyData.bookingId}`);
+        setSelectedBooking(detailRes.data?.data);
+      }
+
+      setNotes(''); // Clear notes input
+      setActiveModal('approval-detail');
+    } catch (err: any) {
+      showToast('Không thể tải chi tiết lịch sử phê duyệt', 'error');
+    }
+  };
+
+  const tabQuery = searchParams.get('tab');
+  const historyIdQuery = searchParams.get('historyId');
+
+  useEffect(() => {
+    if (tabQuery === 'approvals') {
+      setActiveSubTab('approvals');
+    }
+  }, [tabQuery]);
+
+  useEffect(() => {
+    if (historyIdQuery) {
+      const historyId = parseInt(historyIdQuery, 10);
+      if (!isNaN(historyId)) {
+        handleViewHistoryDetail(historyId);
+        // Clear search params to make URL clean
+        setSearchParams(prev => {
+          const next = new URLSearchParams(prev);
+          next.delete('historyId');
+          next.delete('tab');
+          return next;
+        });
+      }
+    }
+  }, [historyIdQuery]);
+
   // Form Hooks
   const {
     register,
@@ -644,7 +687,10 @@ export const Bookings: React.FC = () => {
           endDate: data.endDate,
           meetingStartTime: formatLocalTimeForApi(data.meetingStartTime),
           meetingEndTime: formatLocalTimeForApi(data.meetingEndTime),
-          roomId: Number(data.roomId)
+          roomId: Number(data.roomId),
+          title: data.title,
+          description: data.description || '',
+          attendeeCount: Number(data.attendee) || 1
         };
 
         await apiClient.post('/recurring-pattern', payload);
@@ -837,6 +883,7 @@ export const Bookings: React.FC = () => {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['bookings'] });
+      queryClient.invalidateQueries({ queryKey: ['bookings', 'pending'] });
       showToast('Đã gửi yêu cầu bổ sung thiết bị thành công, chờ approver duyệt', 'success');
       setActiveModal(null);
       setAddEquipRows([]);
@@ -1402,24 +1449,6 @@ export const Bookings: React.FC = () => {
   };
 
   const renderApprovalsList = () => {
-    const handleViewHistoryDetail = async (historyId: number) => {
-      try {
-        const response = await apiClient.get(`/booking/pending/detail/${historyId}`);
-        const historyData = response.data?.data;
-        setSelectedHistory(historyData);
-
-        if (historyData?.bookingId) {
-          const detailRes = await apiClient.get(`/booking/${historyData.bookingId}`);
-          setSelectedBooking(detailRes.data?.data);
-        }
-
-        setNotes(''); // Clear notes input
-        setActiveModal('approval-detail');
-      } catch (err: any) {
-        showToast('Không thể tải chi tiết lịch sử phê duyệt', 'error');
-      }
-    };
-
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
         <div className="glass-card" style={{ padding: '1.5rem' }}>

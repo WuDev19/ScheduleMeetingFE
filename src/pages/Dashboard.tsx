@@ -1,9 +1,8 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { useToast } from '../context/ToastContext';
 import { apiClient } from '../api/client';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import {
   Calendar,
   DoorOpen,
@@ -18,30 +17,22 @@ import {
 
 export const Dashboard: React.FC = () => {
   const { user, hasAuthority } = useAuth();
-  const { showToast } = useToast();
   const navigate = useNavigate();
-  const queryClient = useQueryClient();
-
-  const [approveComment, setApproveComment] = useState('');
-  const [rejectReason, setRejectReason] = useState('');
-  const [selectedBookingId, setSelectedBookingId] = useState<number | null>(null);
-  const [activeModal, setActiveModal] = useState<'approve' | 'reject' | null>(null);
 
   // 1. Fetch My Bookings (Filtered by email / user Booked)
   const { data: myBookings, isLoading: isMyBookingsLoading } = useQuery({
-    queryKey: ['bookings', 'my-upcoming'],
+    queryKey: ['bookings', 'my-upcoming', user?.username],
     queryFn: async () => {
-      // Fetch bookings list; in a real scenario we use filter. Let's hit `/booking/filter`
-      const response = await apiClient.get('/booking/filter');
-      // Sort by start time and get upcoming ones
-      const list = response.data?.data || [];
+      if (!user?.username) return [];
+      const response = await apiClient.get(`/booking/filter?bookedBy=${encodeURIComponent(user.username)}&size=100`);
+      const list = response.data?.data?.content || [];
       const now = new Date();
       return list
         .filter((b: any) => new Date(b.endTime) > now)
         .sort((a: any, b: any) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime())
         .slice(0, 5); // limit to top 5
     },
-    enabled: !!user,
+    enabled: !!user?.username,
   });
   const { data: userDetail } = useQuery({
     queryKey: ['user', 'detail', user?.id],
@@ -72,64 +63,6 @@ export const Dashboard: React.FC = () => {
     },
     enabled: !!user,
   });
-
-  // Approve booking mutation
-  const approveMutation = useMutation({
-    mutationFn: async ({ id, note }: { id: number; note: string }) => {
-      await apiClient.patch(`/booking/approve/${id}`, { note });
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['bookings'] });
-      showToast('Đã duyệt lịch họp thành công', 'success');
-      setActiveModal(null);
-      setApproveComment('');
-    },
-    onError: (err: any) => {
-      const errMsg = err.response?.data?.message || 'Không thể duyệt lịch họp';
-      showToast(errMsg, 'error');
-    }
-  });
-
-  // Reject booking mutation
-  const rejectMutation = useMutation({
-    mutationFn: async ({ id, note }: { id: number; note: string }) => {
-      await apiClient.patch(`/booking/reject/${id}`, { note });
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['bookings'] });
-      showToast('Đã từ chối lịch họp', 'success');
-      setActiveModal(null);
-      setRejectReason('');
-    },
-    onError: (err: any) => {
-      const errMsg = err.response?.data?.message || 'Không thể từ chối lịch họp';
-      showToast(errMsg, 'error');
-    }
-  });
-
-  const handleApproveClick = (id: number) => {
-    setSelectedBookingId(id);
-    setActiveModal('approve');
-  };
-
-  const handleRejectClick = (id: number) => {
-    setSelectedBookingId(id);
-    setActiveModal('reject');
-  };
-
-  const executeApprove = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (selectedBookingId) {
-      approveMutation.mutate({ id: selectedBookingId, note: approveComment });
-    }
-  };
-
-  const executeReject = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (selectedBookingId) {
-      rejectMutation.mutate({ id: selectedBookingId, note: rejectReason });
-    }
-  };
 
   const formatDateTime = (dateStr: string) => {
     const d = new Date(dateStr);
@@ -238,48 +171,73 @@ export const Dashboard: React.FC = () => {
               </div>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-                {pendingBookings?.map((item: any) => (
-                  <div
-                    key={item.id}
-                    style={{
-                      display: 'flex',
-                      flexWrap: 'wrap',
-                      justifyContent: 'space-between',
-                      alignItems: 'center',
-                      padding: '1rem',
-                      borderRadius: 'var(--radius-md)',
-                      backgroundColor: 'var(--bg-primary)',
-                      border: '1px solid var(--border-light)',
-                      gap: '1rem'
-                    }}
-                  >
-                    <div>
-                      <h4 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 600, color: 'var(--text-primary)' }}>{item.title}</h4>
-                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '1rem', marginTop: '0.25rem', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
-                        <span>Phòng: <strong>{item.roomName}</strong> (Tầng {item.floorNumber})</span>
-                        <span>Người đặt: <strong>{item.userBooked}</strong></span>
-                        <span>Thời gian: {formatDateTime(item.startTime)}</span>
+                {pendingBookings?.map((item: any) => {
+                  let actionBadgeColor = 'var(--accent)';
+                  let actionText = 'Đăng ký mới';
+                  if (item.actionType === 'UPDATED') {
+                    actionBadgeColor = 'var(--info)';
+                    actionText = 'Thay đổi thông tin';
+                  } else if (item.actionType === 'ADD_EQUIPMENT' || item.actionType === 'UPDATE_EQUIP_QUANTITY') {
+                    actionBadgeColor = 'var(--warning)';
+                    actionText = 'Cập nhật thiết bị';
+                  }
+
+                  return (
+                    <div
+                      key={item.historyId}
+                      style={{
+                        display: 'flex',
+                        flexWrap: 'wrap',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                        padding: '1rem',
+                        borderRadius: 'var(--radius-md)',
+                        backgroundColor: 'var(--bg-primary)',
+                        border: '1px solid var(--border-light)',
+                        gap: '1rem'
+                      }}
+                    >
+                      <div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                          <span style={{
+                            backgroundColor: actionBadgeColor,
+                            color: '#fff',
+                            fontSize: '0.65rem',
+                            fontWeight: 700,
+                            padding: '2px 8px',
+                            borderRadius: '4px',
+                            textTransform: 'uppercase'
+                          }}>
+                            {actionText}
+                          </span>
+                          <h4 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 600, color: 'var(--text-primary)' }}>{item.title}</h4>
+                        </div>
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '1rem', marginTop: '0.25rem', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                          <span>Phòng: <strong>{item.roomName}</strong></span>
+                          <span>Người đặt: <strong>{item.userBooked}</strong></span>
+                          <span>Thời gian: {formatDateTime(item.startTime)}</span>
+                        </div>
+                      </div>
+
+                      <div style={{ display: 'flex', gap: '0.5rem' }}>
+                        <button
+                          onClick={() => navigate(`/bookings?tab=approvals&historyId=${item.historyId}`)}
+                          className="btn"
+                          style={{ backgroundColor: 'var(--success)', color: '#fff', fontSize: '0.8rem', padding: '0.5rem 0.875rem' }}
+                        >
+                          <CheckCircle size={14} /> Duyệt
+                        </button>
+                        <button
+                          onClick={() => navigate(`/bookings?tab=approvals&historyId=${item.historyId}`)}
+                          className="btn"
+                          style={{ backgroundColor: 'var(--danger)', color: '#fff', fontSize: '0.8rem', padding: '0.5rem 0.875rem' }}
+                        >
+                          <XCircle size={14} /> Từ chối
+                        </button>
                       </div>
                     </div>
-
-                    <div style={{ display: 'flex', gap: '0.5rem' }}>
-                      <button
-                        onClick={() => handleApproveClick(item.id)}
-                        className="btn"
-                        style={{ backgroundColor: 'var(--success)', color: '#fff', fontSize: '0.8rem', padding: '0.5rem 0.875rem' }}
-                      >
-                        <CheckCircle size={14} /> Duyệt
-                      </button>
-                      <button
-                        onClick={() => handleRejectClick(item.id)}
-                        className="btn"
-                        style={{ backgroundColor: 'var(--danger)', color: '#fff', fontSize: '0.8rem', padding: '0.5rem 0.875rem' }}
-                      >
-                        <XCircle size={14} /> Từ chối
-                      </button>
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </section>
@@ -356,72 +314,6 @@ export const Dashboard: React.FC = () => {
         </section>
       </div>
 
-      {/* APPROVE COMMENT MODAL */}
-      {activeModal === 'approve' && (
-        <div className="modal-overlay">
-          <form onSubmit={executeApprove} className="modal-content">
-            <div className="modal-header">
-              <h3 style={{ margin: 0, fontSize: '1.15rem' }}>Duyệt yêu cầu họp</h3>
-              <button type="button" className="btn btn-ghost" style={{ padding: '4px', minWidth: 'auto' }} onClick={() => setActiveModal(null)}>
-                <XCircle size={20} />
-              </button>
-            </div>
-            <div className="modal-body">
-              <div className="form-group">
-                <label className="form-label" htmlFor="approve-note">Ghi chú duyệt lịch họp (không bắt buộc)</label>
-                <textarea
-                  id="approve-note"
-                  className="form-control"
-                  style={{ minHeight: '100px', resize: 'vertical' }}
-                  placeholder="Ví dụ: Đồng ý cấp phòng họp..."
-                  value={approveComment}
-                  onChange={(e) => setApproveComment(e.target.value)}
-                />
-              </div>
-            </div>
-            <div className="modal-footer">
-              <button type="button" className="btn btn-secondary" onClick={() => setActiveModal(null)}>Hủy</button>
-              <button type="submit" className="btn" style={{ backgroundColor: 'var(--success)', color: '#fff' }} disabled={approveMutation.isPending}>
-                {approveMutation.isPending ? 'Đang duyệt...' : 'Đồng ý Duyệt'}
-              </button>
-            </div>
-          </form>
-        </div>
-      )}
-
-      {/* REJECT REASON MODAL */}
-      {activeModal === 'reject' && (
-        <div className="modal-overlay">
-          <form onSubmit={executeReject} className="modal-content">
-            <div className="modal-header">
-              <h3 style={{ margin: 0, fontSize: '1.15rem', color: 'var(--danger)' }}>Từ chối yêu cầu họp</h3>
-              <button type="button" className="btn btn-ghost" style={{ padding: '4px', minWidth: 'auto' }} onClick={() => setActiveModal(null)}>
-                <XCircle size={20} />
-              </button>
-            </div>
-            <div className="modal-body">
-              <div className="form-group">
-                <label className="form-label" htmlFor="reject-note">Lý do từ chối lịch họp (bắt buộc)</label>
-                <textarea
-                  id="reject-note"
-                  required
-                  className="form-control"
-                  style={{ minHeight: '100px', resize: 'vertical' }}
-                  placeholder="Ví dụ: Trùng lịch sự kiện nội bộ / Thiếu thiết bị âm thanh..."
-                  value={rejectReason}
-                  onChange={(e) => setRejectReason(e.target.value)}
-                />
-              </div>
-            </div>
-            <div className="modal-footer">
-              <button type="button" className="btn btn-secondary" onClick={() => setActiveModal(null)}>Hủy</button>
-              <button type="submit" className="btn btn-danger" disabled={rejectMutation.isPending}>
-                {rejectMutation.isPending ? 'Đang từ chối...' : 'Từ Chối Lịch'}
-              </button>
-            </div>
-          </form>
-        </div>
-      )}
     </div>
   );
 };
