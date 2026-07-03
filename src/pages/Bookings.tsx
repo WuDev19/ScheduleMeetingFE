@@ -368,8 +368,9 @@ export const Bookings: React.FC = () => {
   const [activeSubTab, setActiveSubTab] = useState<'scheduler' | 'approvals' | 'recurrings'>('scheduler');
 
   // Modals state
-  const [activeModal, setActiveModal] = useState<'create' | 'detail' | 'edit' | 'approval-detail' | 'add-equipment' | 'create-recurring' | null>(null);
+  const [activeModal, setActiveModal] = useState<'create' | 'detail' | 'edit' | 'approval-detail' | 'add-equipment' | 'add-participants' | 'create-recurring' | null>(null);
   const [addEquipRows, setAddEquipRows] = useState<{ equipmentId: number; quantity: number; action: 'ADD' | 'DELETE' }[]>([]);
+  const [participantsInput, setParticipantsInput] = useState('');
   const [selectedBooking, setSelectedBooking] = useState<any>(null);
   const [selectedHistory, setSelectedHistory] = useState<any>(null);
   const [notes, setNotes] = useState('');
@@ -410,19 +411,28 @@ export const Bookings: React.FC = () => {
       const response = await apiClient.get(`/user/name-and-email?page=${emailPage}&size=${emailPageSize}`);
       return response.data?.data;
     },
-    enabled: activeModal === 'create'
+    enabled: activeModal === 'create' || activeModal === 'add-participants'
   });
 
   const emailSuggestions = emailSuggestionsData?.content || [];
   const emailTotalPages = emailSuggestionsData?.totalPages || 0;
 
   const handleSelectEmail = (selectedEmail: string) => {
-    const currentVal = watch('receiversInput') || '';
-    const emails = currentVal.split(',').map(e => e.trim()).filter(Boolean);
-    if (!emails.includes(selectedEmail)) {
-      emails.push(selectedEmail);
+    if (activeModal === 'create') {
+      const currentVal = watch('receiversInput') || '';
+      const emails = currentVal.split(',').map(e => e.trim()).filter(Boolean);
+      if (!emails.includes(selectedEmail)) {
+        emails.push(selectedEmail);
+      }
+      setValue('receiversInput', emails.join(', ') + (emails.length > 0 ? ', ' : ''));
+    } else if (activeModal === 'add-participants') {
+      const currentVal = participantsInput || '';
+      const emails = currentVal.split(',').map(e => e.trim()).filter(Boolean);
+      if (!emails.includes(selectedEmail)) {
+        emails.push(selectedEmail);
+      }
+      setParticipantsInput(emails.join(', ') + (emails.length > 0 ? ', ' : ''));
     }
-    setValue('receiversInput', emails.join(', ') + (emails.length > 0 ? ', ' : ''));
   };
 
   // Recurring Patterns tab states
@@ -833,6 +843,24 @@ export const Bookings: React.FC = () => {
     },
     onError: (err: any) => {
       const msg = err.response?.data?.message || 'Có lỗi xảy ra khi gửi yêu cầu bổ sung thiết bị';
+      showToast(msg, 'error');
+    }
+  });
+
+  // ADD PARTICIPANTS MUTATION
+  const addParticipantsMutation = useMutation({
+    mutationFn: async ({ bookingId, emails }: { bookingId: number; emails: string[] }) => {
+      await apiClient.patch(`/booking/${bookingId}/participants`, emails);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['bookings'] });
+      queryClient.invalidateQueries({ queryKey: ['bookings', 'pending'] });
+      showToast('Đã gửi yêu cầu bổ sung người tham gia thành công', 'success');
+      setActiveModal('detail');
+      setParticipantsInput('');
+    },
+    onError: (err: any) => {
+      const msg = err.response?.data?.message || 'Có lỗi xảy ra khi bổ sung người tham gia';
       showToast(msg, 'error');
     }
   });
@@ -2503,7 +2531,7 @@ export const Bookings: React.FC = () => {
 
               {/* Receivers emails invite */}
               <div className="form-group" style={{ position: 'relative' }} ref={emailSuggestionsRef}>
-                <label className="form-label" htmlFor="book-receivers">Mời đại biểu tham dự (Email cách nhau bởi dấu phẩy)</label>
+                <label className="form-label" htmlFor="book-receivers">Mời người tham dự (Email cách nhau bởi dấu phẩy)</label>
                 <div style={{ position: 'relative' }}>
                   <span style={{ position: 'absolute', left: '12px', top: '10px', color: 'var(--text-tertiary)' }}>
                     <Mail size={16} />
@@ -2964,7 +2992,7 @@ export const Bookings: React.FC = () => {
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.85rem' }}>
                   <Users size={16} style={{ color: 'var(--accent)' }} />
-                  <span>Quy mô đại biểu: <strong>{selectedBooking.attendee} người tham dự</strong></span>
+                  <span>Quy mô: <strong>{selectedBooking.attendee} người tham dự</strong></span>
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.85rem' }}>
                   <UserCheck size={16} style={{ color: 'var(--accent)' }} />
@@ -3055,18 +3083,25 @@ export const Bookings: React.FC = () => {
                   {(() => {
                     const showComplete = selectedBooking.status === 'APPROVED' && !selectedBooking.isCompleted && !isApprover;
                     const showAddEquip = (selectedBooking.status === 'APPROVED' || selectedBooking.status === 'PENDING') && !isApprover;
-                    if (!showComplete && !showAddEquip) return null;
+                    const showAddParticipants = (selectedBooking.status === 'APPROVED' || selectedBooking.status === 'PENDING') && !isApprover;
+                    
+                    const secondaryButtons = [];
+                    if (showComplete) secondaryButtons.push('complete');
+                    if (showAddEquip) secondaryButtons.push('equip');
+                    if (showAddParticipants) secondaryButtons.push('participants');
+
+                    if (secondaryButtons.length === 0) return null;
                     return (
-                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem' }}>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', width: '100%' }}>
                         {showComplete && (
                           <button
                             type="button"
                             className="btn"
                             style={{
-                              padding: '0.55rem 1.1rem',
-                              fontSize: '0.85rem',
+                              padding: '0.55rem 0.8rem',
+                              fontSize: '0.8rem',
                               fontWeight: 600,
-                              width: '100%',
+                              flex: '1 1 140px',
                               backgroundColor: 'rgba(16, 185, 129, 0.15)',
                               color: 'var(--success)',
                               border: '1px solid rgba(16, 185, 129, 0.4)',
@@ -3074,13 +3109,16 @@ export const Bookings: React.FC = () => {
                               alignItems: 'center',
                               justifyContent: 'center',
                               gap: '6px',
-                              whiteSpace: 'nowrap'
+                              whiteSpace: 'normal',
+                              textAlign: 'center',
+                              lineHeight: '1.2',
+                              minHeight: '40px'
                             }}
                             disabled={completeBookingMutation.isPending}
                             onClick={() => completeBookingMutation.mutate(selectedBooking.id)}
                           >
-                            <CheckCircle size={15} />
-                            {completeBookingMutation.isPending ? 'Đang xác nhận...' : 'Xác nhận hoàn thành'}
+                            <CheckCircle size={15} style={{ flexShrink: 0 }} />
+                            <span>Xác nhận hoàn thành</span>
                           </button>
                         )}
                         {showAddEquip && (
@@ -3088,11 +3126,10 @@ export const Bookings: React.FC = () => {
                             type="button"
                             className="btn"
                             style={{
-                              padding: '0.55rem 1.1rem',
-                              fontSize: '0.85rem',
+                              padding: '0.55rem 0.8rem',
+                              fontSize: '0.8rem',
                               fontWeight: 600,
-                              width: '100%',
-                              gridColumn: showComplete ? undefined : '1 / -1',
+                              flex: '1 1 140px',
                               backgroundColor: 'rgba(245, 158, 11, 0.15)',
                               color: 'var(--warning)',
                               border: '1px solid rgba(245, 158, 11, 0.4)',
@@ -3100,21 +3137,54 @@ export const Bookings: React.FC = () => {
                               alignItems: 'center',
                               justifyContent: 'center',
                               gap: '6px',
-                              whiteSpace: 'nowrap'
+                              whiteSpace: 'normal',
+                              textAlign: 'center',
+                              lineHeight: '1.2',
+                              minHeight: '40px'
                             }}
                             onClick={() => {
                               setAddEquipRows([{ equipmentId: parseInt(String(equipments?.[0]?.equipmentId || 1), 10), quantity: 1, action: 'ADD' }]);
                               setActiveModal('add-equipment');
                             }}
                           >
-                            <Package size={15} />
-                            Bổ sung thiết bị
+                            <Package size={15} style={{ flexShrink: 0 }} />
+                            <span>Bổ sung thiết bị</span>
+                          </button>
+                        )}
+                        {showAddParticipants && (
+                          <button
+                            type="button"
+                            className="btn"
+                            style={{
+                              padding: '0.55rem 0.8rem',
+                              fontSize: '0.8rem',
+                              fontWeight: 600,
+                              flex: '1 1 140px',
+                              backgroundColor: 'rgba(99, 102, 241, 0.15)',
+                              color: 'var(--accent)',
+                              border: '1px solid rgba(99, 102, 241, 0.4)',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              gap: '6px',
+                              whiteSpace: 'normal',
+                              textAlign: 'center',
+                              lineHeight: '1.2',
+                              minHeight: '40px'
+                            }}
+                            onClick={() => {
+                              setParticipantsInput('');
+                              setActiveModal('add-participants');
+                            }}
+                          >
+                            <Users size={15} style={{ flexShrink: 0 }} />
+                            <span>Bổ sung người tham gia</span>
                           </button>
                         )}
                       </div>
                     );
                   })()}
-
+ 
                   {/* Row 2: Đóng, Chỉnh sửa, and Hủy lịch đặt */}
                   {(() => {
                     const isEditableStatus = selectedBooking.status === 'PENDING' || selectedBooking.status === 'APPROVED';
@@ -3122,21 +3192,31 @@ export const Bookings: React.FC = () => {
                     const isAdmin = hasAuthority('ADMIN');
                     const canEdit = (isBookingOwner || isAdmin) && isEditableStatus;
                     const canCancel = isBookingOwner && isEditableStatus && !isApprover;
-
+ 
                     let cols = '1fr';
                     if (canEdit && canCancel) {
                       cols = '1fr 1fr 1fr';
                     } else if (canEdit || canCancel) {
                       cols = '1fr 1fr';
                     }
-
+ 
                     return (
-                      <div style={{ display: 'grid', gridTemplateColumns: cols, gap: '0.5rem' }}>
+                      <div style={{ display: 'grid', gridTemplateColumns: cols, gap: '0.5rem', width: '100%' }}>
                         <button
                           type="button"
                           className="btn btn-secondary"
                           style={{
-                            padding: '0.55rem 1.1rem', fontSize: '0.85rem', fontWeight: 600, width: '100%'
+                            padding: '0.55rem 0.5rem',
+                            fontSize: '0.82rem',
+                            fontWeight: 600,
+                            width: '100%',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            whiteSpace: 'normal',
+                            textAlign: 'center',
+                            lineHeight: '1.2',
+                            minHeight: '38px'
                           }}
                           onClick={() => {
                             closeDetailModal();
@@ -3151,7 +3231,17 @@ export const Bookings: React.FC = () => {
                             type="button"
                             className="btn btn-primary"
                             style={{
-                              padding: '0.55rem 1.1rem', fontSize: '0.85rem', fontWeight: 600, width: '100%'
+                              padding: '0.55rem 0.5rem',
+                              fontSize: '0.82rem',
+                              fontWeight: 600,
+                              width: '100%',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              whiteSpace: 'normal',
+                              textAlign: 'center',
+                              lineHeight: '1.2',
+                              minHeight: '38px'
                             }}
                             onClick={() => {
                               setActiveModal('edit');
@@ -3172,7 +3262,19 @@ export const Bookings: React.FC = () => {
                           <button
                             type="button"
                             className="btn btn-danger"
-                            style={{ padding: '0.55rem 1.1rem', fontSize: '0.85rem', fontWeight: 600, width: '100%' }}
+                            style={{
+                              padding: '0.55rem 0.5rem',
+                              fontSize: '0.82rem',
+                              fontWeight: 600,
+                              width: '100%',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              whiteSpace: 'normal',
+                              textAlign: 'center',
+                              lineHeight: '1.2',
+                              minHeight: '38px'
+                            }}
                             onClick={() => setShowCancelConfirm(true)}
                           >
                             Hủy lịch đặt
@@ -3391,6 +3493,191 @@ export const Bookings: React.FC = () => {
               >
                 <Package size={15} />
                 {addEquipmentMutation.isPending ? 'Đang gửi...' : 'Gửi yêu cầu bổ sung'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ADD PARTICIPANTS MODAL */}
+      {activeModal === 'add-participants' && selectedBooking && (
+        <div className="modal-overlay">
+          <div className="modal-content" style={{ maxWidth: '560px' }}>
+            <div className="modal-header">
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+                <span style={{
+                  width: '32px', height: '32px', borderRadius: '8px',
+                  backgroundColor: 'rgba(99, 102, 241, 0.15)',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center'
+                }}>
+                  <Users size={16} style={{ color: 'var(--accent)' }} />
+                </span>
+                <div>
+                  <h3 style={{ margin: 0, fontSize: '1.1rem' }}>Bổ sung người tham gia</h3>
+                  <p style={{ margin: 0, fontSize: '0.78rem', color: 'var(--text-tertiary)' }}>
+                    {selectedBooking.title}
+                  </p>
+                </div>
+              </div>
+              <button type="button" className="btn btn-ghost" style={{ padding: '4px', minWidth: 'auto' }}
+                onClick={() => { setActiveModal('detail'); setParticipantsInput(''); setShowEmailSuggestions(false); }}>
+                <XCircle size={20} />
+              </button>
+            </div>
+
+            <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+
+              <div style={{
+                backgroundColor: 'rgba(99, 102, 241, 0.08)',
+                border: '1px solid rgba(99, 102, 241, 0.2)',
+                borderRadius: 'var(--radius-sm)',
+                padding: '0.75rem 1rem',
+                fontSize: '0.82rem',
+                color: 'var(--text-secondary)',
+                lineHeight: '1.4'
+              }}>
+                Mời thêm người tham dự hoặc đồng nghiệp tham gia vào cuộc họp này. Hệ thống sẽ gửi email xác nhận và thông báo đến từng người.
+              </div>
+
+              <div className="form-group" style={{ position: 'relative' }} ref={emailSuggestionsRef}>
+                <label className="form-label" htmlFor="add-receivers">
+                  Mời người tham dự (Email cách nhau bởi dấu phẩy)
+                </label>
+                <div style={{ position: 'relative' }}>
+                  <span style={{ position: 'absolute', left: '12px', top: '10px', color: 'var(--text-tertiary)' }}>
+                    <Mail size={16} />
+                  </span>
+                  <textarea
+                    id="add-receivers"
+                    className="form-control"
+                    style={{ width: '100%', paddingLeft: '2.5rem', paddingTop: '8px', minHeight: '80px', resize: 'vertical' }}
+                    placeholder="partner@company.com, colleague@company.com"
+                    value={participantsInput}
+                    onChange={(e) => setParticipantsInput(e.target.value)}
+                    onFocus={() => setShowEmailSuggestions(true)}
+                  />
+                </div>
+
+                {showEmailSuggestions && (
+                  <div
+                    className="glass-card"
+                    style={{
+                      position: 'absolute',
+                      top: '100%',
+                      left: 0,
+                      right: 0,
+                      zIndex: 100,
+                      marginTop: '4px',
+                      boxShadow: '0 8px 24px rgba(0,0,0,0.15)',
+                      border: '1px solid var(--border-light)',
+                      backgroundColor: 'var(--bg-primary)',
+                      padding: '0.5rem',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '2px',
+                      maxHeight: '180px',
+                      overflowY: 'auto'
+                    }}
+                  >
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '4px 8px', borderBottom: '1px solid var(--border-light)', marginBottom: '4px' }}>
+                      <span style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)' }}>Gợi ý email người tham gia</span>
+                      <button
+                        type="button"
+                        className="btn btn-ghost"
+                        style={{ padding: '2px', minWidth: 'auto', color: 'var(--text-tertiary)' }}
+                        onClick={() => setShowEmailSuggestions(false)}
+                      >
+                        <X size={14} />
+                      </button>
+                    </div>
+
+                    {emailSuggestions.length === 0 ? (
+                      <span style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)', padding: '8px', textAlign: 'center' }}>Không có tài khoản gợi ý</span>
+                    ) : (
+                      emailSuggestions.map((item: any) => (
+                        <div
+                          key={item.email}
+                          onClick={() => handleSelectEmail(item.email)}
+                          style={{
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            alignItems: 'center',
+                            padding: '6px 8px',
+                            borderRadius: 'var(--radius-sm)',
+                            cursor: 'pointer',
+                            transition: 'background 0.2s',
+                            fontSize: '0.8rem'
+                          }}
+                          onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'var(--bg-tertiary)'}
+                          onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
+                        >
+                          <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{item.fullName}</span>
+                          <span style={{ color: 'var(--accent)', fontSize: '0.75rem' }}>{item.email}</span>
+                        </div>
+                      ))
+                    )}
+
+                    {emailTotalPages >= 1 && (
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '4px 8px', borderTop: '1px solid var(--border-light)', marginTop: '4px' }}>
+                        <button
+                          type="button"
+                          className="btn btn-secondary"
+                          disabled={emailPage === 0}
+                          onClick={() => setEmailPage(p => Math.max(0, p - 1))}
+                          style={{ padding: '2px 8px', fontSize: '0.72rem', minWidth: 'auto' }}
+                        >
+                          Trước
+                        </button>
+                        <span style={{ fontSize: '0.72rem', color: 'var(--text-secondary)' }}>
+                          Trang {emailPage + 1} / {emailTotalPages}
+                        </span>
+                        <button
+                          type="button"
+                          className="btn btn-secondary"
+                          disabled={emailPage >= emailTotalPages - 1}
+                          onClick={() => setEmailPage(p => Math.min(emailTotalPages - 1, p + 1))}
+                          style={{ padding: '2px 8px', fontSize: '0.72rem', minWidth: 'auto' }}
+                        >
+                          Sau
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+
+            </div>
+
+            <div className="modal-footer">
+              <button type="button" className="btn btn-secondary"
+                onClick={() => { setActiveModal('detail'); setParticipantsInput(''); setShowEmailSuggestions(false); }}>
+                Quay lại
+              </button>
+              <button
+                type="button"
+                className="btn"
+                style={{ backgroundColor: 'var(--accent)', color: '#fff', display: 'flex', alignItems: 'center', gap: '6px' }}
+                disabled={addParticipantsMutation.isPending}
+                onClick={() => {
+                  const emails = participantsInput
+                    .split(',')
+                    .map(e => e.trim())
+                    .filter(e => e.length > 0);
+                  if (emails.length === 0) {
+                    showToast('Vui lòng nhập ít nhất một email', 'error');
+                    return;
+                  }
+                  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+                  const invalidEmails = emails.filter(e => !emailRegex.test(e));
+                  if (invalidEmails.length > 0) {
+                    showToast(`Email không hợp lệ: ${invalidEmails.join(', ')}`, 'error');
+                    return;
+                  }
+                  addParticipantsMutation.mutate({ bookingId: selectedBooking.id, emails });
+                }}
+              >
+                <Users size={15} />
+                {addParticipantsMutation.isPending ? 'Đang gửi...' : 'Gửi lời mời'}
               </button>
             </div>
           </div>
