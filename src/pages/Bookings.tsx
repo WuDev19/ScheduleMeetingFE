@@ -350,12 +350,14 @@ export const Bookings: React.FC = () => {
   const [filterStatus, setFilterStatus] = useState('');
   const [filterOrganizer, setFilterOrganizer] = useState('');
   const [filterMyBookings, setFilterMyBookings] = useState(false);
+  const [filterFromDate, setFilterFromDate] = useState('');
+  const [filterToDate, setFilterToDate] = useState('');
   const [listPage, setListPage] = useState(0);
 
   // Reset page when filters change
   useEffect(() => {
     setListPage(0);
-  }, [filterRoom, filterStatus, filterOrganizer, filterMyBookings, viewMode]);
+  }, [filterRoom, filterStatus, filterOrganizer, filterMyBookings, filterFromDate, filterToDate, viewMode]);
 
   // Sub-tabs for Approver
   const isApprover = hasAuthority('BOOKING:APPROVE');
@@ -512,7 +514,7 @@ export const Bookings: React.FC = () => {
 
   // 3. Fetch Bookings list
   const { data: bookings, isLoading: isBookingsLoading } = useQuery({
-    queryKey: ['bookings', 'list', viewMode, calendarViewType, targetDate, filterRoom, filterStatus, filterOrganizer, filterMyBookings, listPage],
+    queryKey: ['bookings', 'list', viewMode, calendarViewType, targetDate, filterRoom, filterStatus, filterOrganizer, filterMyBookings, filterFromDate, filterToDate, listPage],
     queryFn: async () => {
       if (viewMode === 'calendar') {
         const url = `/booking/view?viewType=${calendarViewType}&targetDate=${targetDate}`;
@@ -551,6 +553,8 @@ export const Bookings: React.FC = () => {
         if (filterStatus) url += `&status=${filterStatus}`;
         if (filterOrganizer) url += `&bookedBy=${encodeURIComponent(filterOrganizer)}`;
         if (filterMyBookings && user?.username) url += `&bookedBy=${encodeURIComponent(user.username)}`;
+        if (filterFromDate) url += `&fromDate=${filterFromDate}T00:00:00%2B07:00`;
+        if (filterToDate) url += `&toDate=${filterToDate}T23:59:59%2B07:00`;
         const response = await apiClient.get(url);
         const pageData = response.data?.data;
         return {
@@ -2113,6 +2117,29 @@ export const Bookings: React.FC = () => {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
+      <style>{`
+        @media (min-width: 1024px) {
+          .list-view-top-bar {
+            display: flex !important;
+            flex-direction: column !important;
+            align-items: stretch !important;
+            gap: 1.25rem !important;
+            padding: 1.25rem 1.5rem !important;
+          }
+          .list-view-toggles {
+            align-self: flex-start !important;
+          }
+          .list-view-filters {
+            display: flex !important;
+            justify-content: center !important;
+            align-items: center !important;
+            align-self: center !important;
+            gap: 0.5rem !important;
+            flex-wrap: wrap !important;
+            width: 100% !important;
+          }
+        }
+      `}</style>
 
       {(isApprover || hasRecurringAccess) && (
         <div style={{ display: 'flex', gap: '0.5rem', borderBottom: '1px solid var(--border-light)', paddingBottom: '0.5rem', marginBottom: '-0.5rem' }}>
@@ -2219,9 +2246,9 @@ export const Bookings: React.FC = () => {
       {activeSubTab === 'scheduler' ? (
         <div className="calendar-container">
           {/* Integrated Top Toolbar */}
-          <div className="calendar-top-bar">
+          <div className={`calendar-top-bar ${viewMode === 'list' ? 'list-view-top-bar' : ''}`}>
             {/* Left: View Mode toggles */}
-            <div style={{ display: 'flex', background: 'var(--bg-tertiary)', padding: '0.25rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-light)' }}>
+            <div className={viewMode === 'list' ? 'list-view-toggles' : ''} style={{ display: 'flex', background: 'var(--bg-tertiary)', padding: '0.25rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-light)' }}>
               <button
                 type="button"
                 className="btn btn-ghost"
@@ -2336,7 +2363,7 @@ export const Bookings: React.FC = () => {
               </div>
             ) : (
               /* Right: Filters (list view only) */
-              <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+              <div className="list-view-filters" style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'center' }}>
                 <select
                   className="calendar-date-input"
                   style={{ appearance: 'none', minWidth: '130px' }}
@@ -2376,8 +2403,30 @@ export const Bookings: React.FC = () => {
                   }}
                 />
 
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                  <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Từ:</span>
+                  <input
+                    type="date"
+                    className="calendar-date-input"
+                    style={{ padding: '0.25rem 0.5rem' }}
+                    value={filterFromDate}
+                    onChange={(e) => setFilterFromDate(e.target.value)}
+                  />
+                </div>
+
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                  <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Đến:</span>
+                  <input
+                    type="date"
+                    className="calendar-date-input"
+                    style={{ padding: '0.25rem 0.5rem' }}
+                    value={filterToDate}
+                    onChange={(e) => setFilterToDate(e.target.value)}
+                  />
+                </div>
+
                 {/* My Bookings Toggle for list view */}
-                <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.8rem', color: filterMyBookings ? 'var(--accent)' : 'var(--text-secondary)', cursor: 'pointer', userSelect: 'none', border: filterMyBookings ? '1px solid var(--accent)' : '1px solid var(--border-light)', borderRadius: 'var(--radius-sm)', padding: '0.3rem 0.65rem', transition: 'all 0.2s ease', backgroundColor: filterMyBookings ? 'rgba(99,102,241,0.1)' : 'transparent' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.8rem', color: filterMyBookings ? 'var(--accent)' : 'var(--text-secondary)', cursor: 'pointer', userSelect: 'none', border: filterMyBookings ? '1px solid var(--accent)' : '1px solid var(--border-light)', borderRadius: 'var(--radius-sm)', padding: '0.3rem 0.65rem', transition: 'all 0.2s ease', backgroundColor: filterMyBookings ? 'rgba(99,102,241,0.1)' : 'transparent', height: '38px' }}>
                   <input
                     type="checkbox"
                     style={{ accentColor: 'var(--accent)', width: '14px', height: '14px' }}
@@ -2391,6 +2440,23 @@ export const Bookings: React.FC = () => {
                   />
                   Lịch của tôi
                 </label>
+
+                {(filterRoom || filterStatus || filterOrganizer || filterMyBookings || filterFromDate || filterToDate) && (
+                  <button
+                    onClick={() => {
+                      setFilterRoom('');
+                      setFilterStatus('');
+                      setFilterOrganizer('');
+                      setFilterMyBookings(false);
+                      setFilterFromDate('');
+                      setFilterToDate('');
+                    }}
+                    className="btn btn-ghost"
+                    style={{ fontSize: '0.8rem', padding: '0.3rem 0.65rem', color: 'var(--danger)', height: '38px', display: 'flex', alignItems: 'center' }}
+                  >
+                    Xóa lọc
+                  </button>
+                )}
               </div>
             )}
           </div>
