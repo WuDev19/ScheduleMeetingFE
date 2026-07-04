@@ -517,7 +517,10 @@ export const Bookings: React.FC = () => {
     queryKey: ['bookings', 'list', viewMode, calendarViewType, targetDate, filterRoom, filterStatus, filterOrganizer, filterMyBookings, filterFromDate, filterToDate, listPage],
     queryFn: async () => {
       if (viewMode === 'calendar') {
-        const url = `/booking/view?viewType=${calendarViewType}&targetDate=${targetDate}`;
+        let url = `/booking/view?viewType=${calendarViewType}&targetDate=${targetDate}`;
+        if (filterRoom) url += `&roomId=${filterRoom}`;
+        if (filterStatus) url += `&status=${filterStatus}`;
+        if (filterOrganizer) url += `&fullName=${encodeURIComponent(filterOrganizer)}`;
         const response = await apiClient.get(url);
         let result = response.data?.data || [];
 
@@ -525,7 +528,7 @@ export const Bookings: React.FC = () => {
           const unavailResponse = await apiClient.get('/unavailability-room/all?isDeleted=false&page=0&size=1000');
           const unavailList = unavailResponse.data?.data?.content || [];
           const now = new Date();
-          const mappedUnavail = unavailList
+          let mappedUnavail = unavailList
             .filter((un: any) => new Date(un.end) >= now)
             .map((un: any) => ({
               id: `unavail-${un.unId}`,
@@ -537,6 +540,14 @@ export const Bookings: React.FC = () => {
               status: 'UNAVAILABLE',
               isUnavailability: true
             }));
+
+          if (filterRoom) {
+            mappedUnavail = mappedUnavail.filter((un: any) => un.roomId === Number(filterRoom));
+          }
+          if (filterStatus || filterOrganizer) {
+            mappedUnavail = [];
+          }
+
           result = [...result, ...mappedUnavail];
         } catch (error) {
           console.error("Error fetching unavailabilities for calendar:", error);
@@ -2246,219 +2257,211 @@ export const Bookings: React.FC = () => {
       {activeSubTab === 'scheduler' ? (
         <div className="calendar-container">
           {/* Integrated Top Toolbar */}
-          <div className={`calendar-top-bar ${viewMode === 'list' ? 'list-view-top-bar' : ''}`}>
-            {/* Left: View Mode toggles */}
-            <div className={viewMode === 'list' ? 'list-view-toggles' : ''} style={{ display: 'flex', background: 'var(--bg-tertiary)', padding: '0.25rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-light)' }}>
-              <button
-                type="button"
-                className="btn btn-ghost"
-                style={{
-                  padding: '0.4rem 0.75rem',
-                  fontSize: '0.8rem',
-                  borderRadius: 'var(--radius-sm)',
-                  backgroundColor: viewMode === 'list' ? 'var(--bg-secondary)' : 'transparent',
-                  color: viewMode === 'list' ? 'var(--accent)' : 'var(--text-secondary)',
-                  boxShadow: viewMode === 'list' ? 'var(--shadow-sm)' : 'none'
-                }}
-                onClick={() => setViewMode('list')}
-              >
-                <List size={16} /> Danh sách
-              </button>
-              <button
-                type="button"
-                className="btn btn-ghost"
-                style={{
-                  padding: '0.4rem 0.75rem',
-                  fontSize: '0.8rem',
-                  borderRadius: 'var(--radius-sm)',
-                  backgroundColor: viewMode === 'calendar' ? 'var(--bg-secondary)' : 'transparent',
-                  color: viewMode === 'calendar' ? 'var(--accent)' : 'var(--text-secondary)',
-                  boxShadow: viewMode === 'calendar' ? 'var(--shadow-sm)' : 'none'
-                }}
-                onClick={() => setViewMode('calendar')}
-              >
-                <CalendarIcon size={16} /> Lịch biểu
-              </button>
+          {/* Integrated Top Toolbar */}
+          <div className="calendar-top-bar" style={{ display: 'flex', flexDirection: 'column', alignItems: 'stretch', gap: '1rem' }}>
+            {/* Row 1: View Toggles & Date Navigation */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%', flexWrap: 'wrap', gap: '1rem' }}>
+              {/* Left: View Mode toggles */}
+              <div style={{ display: 'flex', background: 'var(--bg-tertiary)', padding: '0.25rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-light)' }}>
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  style={{
+                    padding: '0.4rem 0.75rem',
+                    fontSize: '0.8rem',
+                    borderRadius: 'var(--radius-sm)',
+                    backgroundColor: viewMode === 'list' ? 'var(--bg-secondary)' : 'transparent',
+                    color: viewMode === 'list' ? 'var(--accent)' : 'var(--text-secondary)',
+                    boxShadow: viewMode === 'list' ? 'var(--shadow-sm)' : 'none'
+                  }}
+                  onClick={() => setViewMode('list')}
+                >
+                  <List size={16} /> Danh sách
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  style={{
+                    padding: '0.4rem 0.75rem',
+                    fontSize: '0.8rem',
+                    borderRadius: 'var(--radius-sm)',
+                    backgroundColor: viewMode === 'calendar' ? 'var(--bg-secondary)' : 'transparent',
+                    color: viewMode === 'calendar' ? 'var(--accent)' : 'var(--text-secondary)',
+                    boxShadow: viewMode === 'calendar' ? 'var(--shadow-sm)' : 'none'
+                  }}
+                  onClick={() => setViewMode('calendar')}
+                >
+                  <CalendarIcon size={16} /> Lịch biểu
+                </button>
+              </div>
+
+              {/* Right: Date navigation (only in calendar mode) */}
+              {viewMode === 'calendar' && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                  {/* Navigation arrows + date display */}
+                  <button type="button" className="calendar-control-btn" onClick={() => changeTargetDate(-1)}>
+                    <ChevronLeft size={16} />
+                  </button>
+
+                  {/* MONTH & WEEK: show MM/YYYY only | DAY: show full date input */}
+                  {calendarViewType === 'DAY' ? (
+                    <input
+                      type="date"
+                      className="calendar-date-input"
+                      value={targetDate}
+                      onChange={(e) => setTargetDate(e.target.value)}
+                    />
+                  ) : (
+                    /* Month/Week: clickable MM/YYYY label backed by a hidden month input */
+                    <div style={{ position: 'relative', display: 'inline-flex', alignItems: 'center' }}>
+                      <span style={{
+                        fontSize: '0.88rem', fontWeight: 700, color: 'var(--text-primary)',
+                        padding: '0.38rem 0.7rem',
+                        border: '1px solid var(--border-light)',
+                        borderRadius: 'var(--radius-sm)',
+                        backgroundColor: 'rgba(255,255,255,0.04)',
+                        cursor: 'pointer',
+                        letterSpacing: '0.02em',
+                        userSelect: 'none',
+                      }}>
+                        {String(parseLocalYYYYMMDD(targetDate).getMonth() + 1).padStart(2, '0')}/{parseLocalYYYYMMDD(targetDate).getFullYear()}
+                      </span>
+                      <input
+                        type="month"
+                        style={{
+                          position: 'absolute', inset: 0, opacity: 0, cursor: 'pointer', width: '100%', height: '100%',
+                        }}
+                        value={`${parseLocalYYYYMMDD(targetDate).getFullYear()}-${String(parseLocalYYYYMMDD(targetDate).getMonth() + 1).padStart(2, '0')}`}
+                        onChange={(e) => {
+                          if (e.target.value) {
+                            const [y, m] = e.target.value.split('-');
+                            const newDate = new Date(Number(y), Number(m) - 1, 1);
+                            setTargetDate(formatLocalYYYYMMDD(newDate));
+                          }
+                        }}
+                      />
+                    </div>
+                  )}
+
+                  <button type="button" className="calendar-control-btn" onClick={() => changeTargetDate(1)}>
+                    <ChevronRight size={16} />
+                  </button>
+
+                  {/* Sub-view selection */}
+                  <select
+                    className="calendar-date-input"
+                    style={{ appearance: 'none', minWidth: '120px' }}
+                    value={calendarViewType}
+                    onChange={(e: any) => setCalendarViewType(e.target.value)}
+                  >
+                    <option value="MONTH">Theo Tháng</option>
+                    <option value="WEEK">Theo Tuần</option>
+                    <option value="DAY">Theo Ngày</option>
+                  </select>
+                </div>
+              )}
             </div>
 
-            {/* Center: Date picker for Calendar view */}
-            {viewMode === 'calendar' ? (
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
-                {/* Navigation arrows + date display */}
-                <button type="button" className="calendar-control-btn" onClick={() => changeTargetDate(-1)}>
-                  <ChevronLeft size={16} />
-                </button>
+            {/* Row 2: Filters (shared between list and calendar views, list has additional date range filters) */}
+            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'center' }}>
+              <select
+                className="calendar-date-input"
+                style={{ appearance: 'none', minWidth: '130px' }}
+                value={filterRoom}
+                onChange={(e) => setFilterRoom(e.target.value)}
+              >
+                <option value="">-- Phòng họp --</option>
+                {rooms?.map((r: any) => (
+                  <option key={r.id} value={r.id}>{r.roomName}</option>
+                ))}
+              </select>
 
-                {/* MONTH & WEEK: show MM/YYYY only | DAY: show full date input */}
-                {calendarViewType === 'DAY' ? (
-                  <input
-                    type="date"
-                    className="calendar-date-input"
-                    value={targetDate}
-                    onChange={(e) => setTargetDate(e.target.value)}
-                  />
-                ) : (
-                  /* Month/Week: clickable MM/YYYY label backed by a hidden month input */
-                  <div style={{ position: 'relative', display: 'inline-flex', alignItems: 'center' }}>
-                    <span style={{
-                      fontSize: '0.88rem', fontWeight: 700, color: 'var(--text-primary)',
-                      padding: '0.38rem 0.7rem',
-                      border: '1px solid var(--border-light)',
-                      borderRadius: 'var(--radius-sm)',
-                      backgroundColor: 'rgba(255,255,255,0.04)',
-                      cursor: 'pointer',
-                      letterSpacing: '0.02em',
-                      userSelect: 'none',
-                    }}>
-                      {String(parseLocalYYYYMMDD(targetDate).getMonth() + 1).padStart(2, '0')}/{parseLocalYYYYMMDD(targetDate).getFullYear()}
-                    </span>
+              <select
+                className="calendar-date-input"
+                style={{ appearance: 'none', minWidth: '120px' }}
+                value={filterStatus}
+                onChange={(e) => setFilterStatus(e.target.value)}
+              >
+                <option value="">-- Trạng thái --</option>
+                <option value="PENDING">Đang chờ</option>
+                <option value="APPROVED">Đã duyệt</option>
+                <option value="REJECTED">Từ chối</option>
+                <option value="CANCELLED">Đã hủy</option>
+              </select>
+
+              <input
+                type="text"
+                className="calendar-date-input"
+                style={{ maxWidth: '140px' }}
+                placeholder="Người đặt..."
+                value={filterOrganizer}
+                onChange={(e) => {
+                  setFilterOrganizer(e.target.value);
+                  if (e.target.value) {
+                    setFilterMyBookings(false);
+                  }
+                }}
+              />
+
+              {viewMode === 'list' && (
+                <>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                    <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Từ:</span>
                     <input
-                      type="month"
-                      style={{
-                        position: 'absolute', inset: 0, opacity: 0, cursor: 'pointer', width: '100%', height: '100%',
-                      }}
-                      value={`${parseLocalYYYYMMDD(targetDate).getFullYear()}-${String(parseLocalYYYYMMDD(targetDate).getMonth() + 1).padStart(2, '0')}`}
-                      onChange={(e) => {
-                        if (e.target.value) {
-                          const [y, m] = e.target.value.split('-');
-                          const newDate = new Date(Number(y), Number(m) - 1, 1);
-                          setTargetDate(formatLocalYYYYMMDD(newDate));
-                        }
-                      }}
+                      type="date"
+                      className="calendar-date-input"
+                      style={{ padding: '0.25rem 0.5rem' }}
+                      value={filterFromDate}
+                      onChange={(e) => setFilterFromDate(e.target.value)}
                     />
                   </div>
-                )}
 
-                <button type="button" className="calendar-control-btn" onClick={() => changeTargetDate(1)}>
-                  <ChevronRight size={16} />
-                </button>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                    <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Đến:</span>
+                    <input
+                      type="date"
+                      className="calendar-date-input"
+                      style={{ padding: '0.25rem 0.5rem' }}
+                      value={filterToDate}
+                      onChange={(e) => setFilterToDate(e.target.value)}
+                    />
+                  </div>
+                </>
+              )}
 
-                {/* Sub-view selection */}
-                <select
-                  className="calendar-date-input"
-                  style={{ appearance: 'none', minWidth: '120px' }}
-                  value={calendarViewType}
-                  onChange={(e: any) => setCalendarViewType(e.target.value)}
-                >
-                  <option value="MONTH">Theo Tháng</option>
-                  <option value="WEEK">Theo Tuần</option>
-                  <option value="DAY">Theo Ngày</option>
-                </select>
-
-                {/* My Bookings Toggle */}
-                <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.8rem', color: filterMyBookings ? 'var(--accent)' : 'var(--text-secondary)', cursor: 'pointer', userSelect: 'none', border: filterMyBookings ? '1px solid var(--accent)' : '1px solid var(--border-light)', borderRadius: 'var(--radius-sm)', padding: '0.3rem 0.65rem', transition: 'all 0.2s ease', backgroundColor: filterMyBookings ? 'rgba(99,102,241,0.1)' : 'transparent' }}>
-                  <input
-                    type="checkbox"
-                    style={{ accentColor: 'var(--accent)', width: '14px', height: '14px' }}
-                    checked={filterMyBookings}
-                    onChange={(e) => {
-                      setFilterMyBookings(e.target.checked);
-                      if (e.target.checked) {
-                        setFilterOrganizer('');
-                      }
-                    }}
-                  />
-                  Lịch của tôi
-                </label>
-              </div>
-            ) : (
-              /* Right: Filters (list view only) */
-              <div className="list-view-filters" style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'center' }}>
-                <select
-                  className="calendar-date-input"
-                  style={{ appearance: 'none', minWidth: '130px' }}
-                  value={filterRoom}
-                  onChange={(e) => setFilterRoom(e.target.value)}
-                >
-                  <option value="">-- Phòng họp --</option>
-                  {rooms?.map((r: any) => (
-                    <option key={r.id} value={r.id}>{r.roomName}</option>
-                  ))}
-                </select>
-
-                <select
-                  className="calendar-date-input"
-                  style={{ appearance: 'none', minWidth: '120px' }}
-                  value={filterStatus}
-                  onChange={(e) => setFilterStatus(e.target.value)}
-                >
-                  <option value="">-- Trạng thái --</option>
-                  <option value="PENDING">Đang chờ</option>
-                  <option value="APPROVED">Đã duyệt</option>
-                  <option value="REJECTED">Từ chối</option>
-                  <option value="CANCELLED">Đã hủy</option>
-                </select>
-
+              {/* My Bookings Toggle */}
+              <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.8rem', color: filterMyBookings ? 'var(--accent)' : 'var(--text-secondary)', cursor: 'pointer', userSelect: 'none', border: filterMyBookings ? '1px solid var(--accent)' : '1px solid var(--border-light)', borderRadius: 'var(--radius-sm)', padding: '0.3rem 0.65rem', transition: 'all 0.2s ease', backgroundColor: filterMyBookings ? 'rgba(99,102,241,0.1)' : 'transparent', height: '38px' }}>
                 <input
-                  type="text"
-                  className="calendar-date-input"
-                  style={{ maxWidth: '140px' }}
-                  placeholder="Người đặt..."
-                  value={filterOrganizer}
+                  type="checkbox"
+                  style={{ accentColor: 'var(--accent)', width: '14px', height: '14px' }}
+                  checked={filterMyBookings}
                   onChange={(e) => {
-                    setFilterOrganizer(e.target.value);
-                    if (e.target.value) {
-                      setFilterMyBookings(false);
+                    setFilterMyBookings(e.target.checked);
+                    if (e.target.checked) {
+                      setFilterOrganizer('');
                     }
                   }}
                 />
+                Lịch của tôi
+              </label>
 
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
-                  <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Từ:</span>
-                  <input
-                    type="date"
-                    className="calendar-date-input"
-                    style={{ padding: '0.25rem 0.5rem' }}
-                    value={filterFromDate}
-                    onChange={(e) => setFilterFromDate(e.target.value)}
-                  />
-                </div>
-
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
-                  <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Đến:</span>
-                  <input
-                    type="date"
-                    className="calendar-date-input"
-                    style={{ padding: '0.25rem 0.5rem' }}
-                    value={filterToDate}
-                    onChange={(e) => setFilterToDate(e.target.value)}
-                  />
-                </div>
-
-                {/* My Bookings Toggle for list view */}
-                <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.8rem', color: filterMyBookings ? 'var(--accent)' : 'var(--text-secondary)', cursor: 'pointer', userSelect: 'none', border: filterMyBookings ? '1px solid var(--accent)' : '1px solid var(--border-light)', borderRadius: 'var(--radius-sm)', padding: '0.3rem 0.65rem', transition: 'all 0.2s ease', backgroundColor: filterMyBookings ? 'rgba(99,102,241,0.1)' : 'transparent', height: '38px' }}>
-                  <input
-                    type="checkbox"
-                    style={{ accentColor: 'var(--accent)', width: '14px', height: '14px' }}
-                    checked={filterMyBookings}
-                    onChange={(e) => {
-                      setFilterMyBookings(e.target.checked);
-                      if (e.target.checked) {
-                        setFilterOrganizer('');
-                      }
-                    }}
-                  />
-                  Lịch của tôi
-                </label>
-
-                {(filterRoom || filterStatus || filterOrganizer || filterMyBookings || filterFromDate || filterToDate) && (
-                  <button
-                    onClick={() => {
-                      setFilterRoom('');
-                      setFilterStatus('');
-                      setFilterOrganizer('');
-                      setFilterMyBookings(false);
-                      setFilterFromDate('');
-                      setFilterToDate('');
-                    }}
-                    className="btn btn-ghost"
-                    style={{ fontSize: '0.8rem', padding: '0.3rem 0.65rem', color: 'var(--danger)', height: '38px', display: 'flex', alignItems: 'center' }}
-                  >
-                    Xóa lọc
-                  </button>
-                )}
-              </div>
-            )}
+              {(filterRoom || filterStatus || filterOrganizer || filterMyBookings || (viewMode === 'list' && (filterFromDate || filterToDate))) && (
+                <button
+                  onClick={() => {
+                    setFilterRoom('');
+                    setFilterStatus('');
+                    setFilterOrganizer('');
+                    setFilterMyBookings(false);
+                    setFilterFromDate('');
+                    setFilterToDate('');
+                  }}
+                  className="btn btn-ghost"
+                  style={{ fontSize: '0.8rem', padding: '0.3rem 0.65rem', color: 'var(--danger)', height: '38px', display: 'flex', alignItems: 'center' }}
+                >
+                  Xóa lọc
+                </button>
+              )}
+            </div>
           </div>
 
           {/* Display Area Content */}
@@ -3253,7 +3256,7 @@ export const Bookings: React.FC = () => {
                     const showComplete = selectedBooking.status === 'APPROVED' && !selectedBooking.isCompleted && !isApprover;
                     const showAddEquip = (selectedBooking.status === 'APPROVED' || selectedBooking.status === 'PENDING') && !isApprover;
                     const showAddParticipants = (selectedBooking.status === 'APPROVED' || selectedBooking.status === 'PENDING') && !isApprover;
-                    
+
                     const secondaryButtons = [];
                     if (showComplete) secondaryButtons.push('complete');
                     if (showAddEquip) secondaryButtons.push('equip');
@@ -3353,7 +3356,7 @@ export const Bookings: React.FC = () => {
                       </div>
                     );
                   })()}
- 
+
                   {/* Row 2: Đóng, Chỉnh sửa, and Hủy lịch đặt */}
                   {(() => {
                     const isEditableStatus = selectedBooking.status === 'PENDING' || selectedBooking.status === 'APPROVED';
@@ -3361,14 +3364,14 @@ export const Bookings: React.FC = () => {
                     const isAdmin = hasAuthority('ADMIN');
                     const canEdit = (isBookingOwner || isAdmin) && isEditableStatus;
                     const canCancel = isBookingOwner && isEditableStatus && !isApprover;
- 
+
                     let cols = '1fr';
                     if (canEdit && canCancel) {
                       cols = '1fr 1fr 1fr';
                     } else if (canEdit || canCancel) {
                       cols = '1fr 1fr';
                     }
- 
+
                     return (
                       <div style={{ display: 'grid', gridTemplateColumns: cols, gap: '0.5rem', width: '100%' }}>
                         <button
