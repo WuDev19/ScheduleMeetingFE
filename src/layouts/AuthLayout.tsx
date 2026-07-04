@@ -7,13 +7,14 @@ interface AuthLayoutProps {
 export const AuthLayout: React.FC<AuthLayoutProps> = ({ children }) => {
   return (
     <div 
+      data-theme="light"
       style={{
         minHeight: '100vh',
         width: '100vw',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        background: 'radial-gradient(ellipse at top, #1e1b4b, #0f172a)',
+        background: 'radial-gradient(circle at top, #d9f3ee, #f4faf8 60%, #ffffff 100%)',
         padding: '1.5rem',
         position: 'relative',
         overflow: 'hidden'
@@ -28,7 +29,7 @@ export const AuthLayout: React.FC<AuthLayoutProps> = ({ children }) => {
           width: '400px',
           height: '400px',
           borderRadius: '50%',
-          background: 'rgba(124, 58, 237, 0.15)',
+          background: 'rgba(20, 184, 166, 0.2)',
           filter: 'blur(100px)',
           zIndex: 1
         }}
@@ -41,13 +42,13 @@ export const AuthLayout: React.FC<AuthLayoutProps> = ({ children }) => {
           width: '350px',
           height: '350px',
           borderRadius: '50%',
-          background: 'rgba(59, 130, 246, 0.12)',
+          background: 'rgba(16, 185, 129, 0.15)',
           filter: 'blur(100px)',
           zIndex: 1
         }}
       />
 
-      <div style={{ position: 'relative', zIndex: 10, width: '100%', maxWidth: '440px' }}>
+      <div style={{ position: 'relative', zIndex: 10, width: '100%', maxWidth: '960px', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
         {children}
       </div>
     </div>

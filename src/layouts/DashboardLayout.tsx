@@ -184,7 +184,7 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) =>
 
   const getPageTitle = () => {
     const activeItem = navItems.find((item) => item.path === location.pathname);
-    return activeItem ? activeItem.name : 'SynchroSpace';
+    return activeItem ? activeItem.name : 'ScheduleMeeting';
   };
 
   return (
@@ -226,7 +226,7 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) =>
               <Building size={20} />
             </div>
             <div>
-              <h2 style={{ fontSize: '1.25rem', fontWeight: 700, margin: 0 }} className="text-gradient">SynchroSpace</h2>
+              <h2 style={{ fontSize: '1.25rem', fontWeight: 700, margin: 0 }} className="text-gradient">ScheduleMeeting</h2>
               <span style={{ fontSize: '0.7rem', color: 'var(--text-tertiary)', letterSpacing: '0.05em' }}>MEETING SPACE MANAGER</span>
             </div>
           </div>
@@ -313,7 +313,7 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) =>
         <button className="btn btn-ghost" onClick={() => setIsSidebarOpen(true)}>
           <Menu size={24} />
         </button>
-        <h2 style={{ fontSize: '1.2rem', margin: 0 }}>SynchroSpace</h2>
+        <h2 style={{ fontSize: '1.2rem', margin: 0 }}>ScheduleMeeting</h2>
       </div>
 
       {/* SIDEBAR OVERLAY FOR MOBILE */}
