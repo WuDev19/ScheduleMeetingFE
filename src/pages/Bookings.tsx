@@ -366,6 +366,7 @@ export const Bookings: React.FC = () => {
   const hasRecurringAccess = canManageRecurring || canApproveRecurring || canViewAllRecurring || canViewRecurring;
 
   const [activeSubTab, setActiveSubTab] = useState<'scheduler' | 'approvals' | 'recurrings'>('scheduler');
+  const [approvalsPage, setApprovalsPage] = useState(0);
 
   // Modals state
   const [activeModal, setActiveModal] = useState<'create' | 'detail' | 'edit' | 'approval-detail' | 'add-equipment' | 'add-participants' | 'create-recurring' | null>(null);
@@ -378,14 +379,17 @@ export const Bookings: React.FC = () => {
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
 
   // Fetch pending approvals for Approver
-  const { data: pendingApprovals, isLoading: isPendingApprovalsLoading } = useQuery({
-    queryKey: ['bookings', 'pending'],
+  const { data: pendingApprovalsData, isLoading: isPendingApprovalsLoading } = useQuery({
+    queryKey: ['bookings', 'pending', approvalsPage],
     queryFn: async () => {
-      const response = await apiClient.get('/booking/pending?page=0&size=10');
-      return response.data?.data?.content || [];
+      const response = await apiClient.get(`/booking/pending?page=${approvalsPage}&size=10`);
+      return response.data?.data;
     },
     enabled: isApprover,
   });
+  const pendingApprovals = pendingApprovalsData?.content || [];
+  const approvalsTotalPages = pendingApprovalsData?.totalPages || 0;
+  const approvalsTotalElements = pendingApprovalsData?.totalElements || 0;
 
   // Email suggestions pagination & data state
   const [emailPage, setEmailPage] = useState(0);
@@ -1523,6 +1527,76 @@ export const Bookings: React.FC = () => {
               })}
             </div>
           )}
+
+          {!isPendingApprovalsLoading && approvalsTotalPages > 1 && (
+            <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '0.5rem', marginTop: '1.5rem', flexWrap: 'wrap' }}>
+              <button
+                type="button"
+                className="btn btn-ghost"
+                style={{ padding: '0.35rem 0.65rem', fontSize: '0.8rem' }}
+                disabled={approvalsPage === 0}
+                onClick={() => setApprovalsPage(0)}
+              >
+                «
+              </button>
+              <button
+                type="button"
+                className="btn btn-ghost"
+                style={{ padding: '0.35rem 0.65rem', fontSize: '0.8rem' }}
+                disabled={approvalsPage === 0}
+                onClick={() => setApprovalsPage(p => Math.max(0, p - 1))}
+              >
+                <ChevronLeft size={15} />
+              </button>
+
+              {Array.from({ length: approvalsTotalPages }, (_, i) => i)
+                .filter(i => Math.abs(i - approvalsPage) <= 2)
+                .map(i => (
+                  <button
+                    key={i}
+                    type="button"
+                    className="btn"
+                    style={{
+                      padding: '0.35rem 0.7rem',
+                      fontSize: '0.8rem',
+                      minWidth: '36px',
+                      backgroundColor: i === approvalsPage ? 'var(--accent)' : 'transparent',
+                      color: i === approvalsPage ? '#fff' : 'var(--text-secondary)',
+                      border: i === approvalsPage ? 'none' : '1px solid var(--border-light)',
+                      fontWeight: i === approvalsPage ? 700 : 400
+                    }}
+                    onClick={() => setApprovalsPage(i)}
+                  >
+                    {i + 1}
+                  </button>
+                ))
+              }
+
+              <button
+                type="button"
+                className="btn btn-ghost"
+                style={{ padding: '0.35rem 0.65rem', fontSize: '0.8rem' }}
+                disabled={approvalsPage >= approvalsTotalPages - 1}
+                onClick={() => setApprovalsPage(p => Math.min(approvalsTotalPages - 1, p + 1))}
+              >
+                <ChevronRight size={15} />
+              </button>
+              <button
+                type="button"
+                className="btn btn-ghost"
+                style={{ padding: '0.35rem 0.65rem', fontSize: '0.8rem' }}
+                disabled={approvalsPage >= approvalsTotalPages - 1}
+                onClick={() => setApprovalsPage(approvalsTotalPages - 1)}
+              >
+                »
+              </button>
+
+              <span style={{ fontSize: '0.78rem', color: 'var(--text-tertiary)', marginLeft: '0.25rem' }}>
+                Trang {approvalsPage + 1} / {approvalsTotalPages}
+                {approvalsTotalElements > 0 && ` · ${approvalsTotalElements} yêu cầu`}
+              </span>
+            </div>
+          )}
         </div>
       </div>
     );
@@ -2081,7 +2155,7 @@ export const Bookings: React.FC = () => {
               onClick={() => setActiveSubTab('approvals')}
             >
               <UserCheck size={16} /> Phê duyệt yêu cầu
-              {pendingApprovals && pendingApprovals.length > 0 && (
+              {approvalsTotalElements > 0 && (
                 <span style={{
                   backgroundColor: 'var(--danger)',
                   color: '#fff',
@@ -2091,7 +2165,7 @@ export const Bookings: React.FC = () => {
                   borderRadius: '10px',
                   lineHeight: 1
                 }}>
-                  {pendingApprovals.length}
+                  {approvalsTotalElements}
                 </span>
               )}
             </button>

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { apiClient } from '../api/client';
@@ -12,12 +12,15 @@ import {
   XCircle,
   ArrowRight,
   Briefcase,
-  AlertCircle
+  AlertCircle,
+  ChevronLeft,
+  ChevronRight
 } from 'lucide-react';
 
 export const Dashboard: React.FC = () => {
   const { user, hasAuthority } = useAuth();
   const navigate = useNavigate();
+  const [pendingPage, setPendingPage] = useState(0);
 
   // 1. Fetch My Bookings (Filtered by email / user Booked)
   const { data: myBookings, isLoading: isMyBookingsLoading } = useQuery({
@@ -29,8 +32,7 @@ export const Dashboard: React.FC = () => {
       const now = new Date();
       return list
         .filter((b: any) => new Date(b.endTime) > now)
-        .sort((a: any, b: any) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime())
-        .slice(0, 5); // limit to top 5
+        .sort((a: any, b: any) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime());
     },
     enabled: !!user?.username,
   });
@@ -45,14 +47,17 @@ export const Dashboard: React.FC = () => {
   });
   // 2. Fetch Pending Bookings for Approvers
   const isApprover = hasAuthority('BOOKING:APPROVE');
-  const { data: pendingBookings, isLoading: isPendingLoading } = useQuery({
-    queryKey: ['bookings', 'pending'],
+  const { data: pendingData, isLoading: isPendingLoading } = useQuery({
+    queryKey: ['bookings', 'pending', pendingPage],
     queryFn: async () => {
-      const response = await apiClient.get('/booking/pending?page=0&size=10');
-      return response.data?.data?.content || [];
+      const response = await apiClient.get(`/booking/pending?page=${pendingPage}&size=5`);
+      return response.data?.data;
     },
     enabled: isApprover && !!user,
   });
+
+  const pendingBookings = pendingData?.content || [];
+  const pendingTotalPages = pendingData?.totalPages || 0;
 
   // 3. Fetch Rooms stats
   const { data: roomsCount } = useQuery({
@@ -97,7 +102,7 @@ export const Dashboard: React.FC = () => {
           <div>
             <span style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)', fontWeight: 600, textTransform: 'uppercase' }}>Lịch họp sắp tới</span>
             <h3 style={{ fontSize: '1.5rem', fontWeight: 700, margin: 0, color: 'var(--text-primary)' }}>
-              {isMyBookingsLoading ? '...' : myBookings?.length || 0}
+              {isMyBookingsLoading ? '...' : (myBookings && myBookings.length > 5 ? '5+' : myBookings?.length || 0)}
             </h3>
           </div>
         </div>
@@ -156,7 +161,7 @@ export const Dashboard: React.FC = () => {
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
               <h3 style={{ fontSize: '1.15rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                 <Clock size={20} style={{ color: 'var(--warning)' }} />
-                Yêu cầu chờ duyệt ({pendingBookings?.length || 0})
+                Yêu cầu chờ duyệt ({pendingData?.totalElements || 0})
               </h3>
             </div>
 
@@ -171,73 +176,101 @@ export const Dashboard: React.FC = () => {
               </div>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-                {pendingBookings?.map((item: any) => {
-                  let actionBadgeColor = 'var(--accent)';
-                  let actionText = 'Đăng ký mới';
-                  if (item.actionType === 'UPDATED') {
-                    actionBadgeColor = 'var(--info)';
-                    actionText = 'Thay đổi thông tin';
-                  } else if (item.actionType === 'ADD_EQUIPMENT' || item.actionType === 'UPDATE_EQUIP_QUANTITY') {
-                    actionBadgeColor = 'var(--warning)';
-                    actionText = 'Cập nhật thiết bị';
-                  }
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                  {pendingBookings?.map((item: any) => {
+                    let actionBadgeColor = 'var(--accent)';
+                    let actionText = 'Đăng ký mới';
+                    if (item.actionType === 'UPDATED') {
+                      actionBadgeColor = 'var(--info)';
+                      actionText = 'Thay đổi thông tin';
+                    } else if (item.actionType === 'ADD_EQUIPMENT' || item.actionType === 'UPDATE_EQUIP_QUANTITY') {
+                      actionBadgeColor = 'var(--warning)';
+                      actionText = 'Cập nhật thiết bị';
+                    }
 
-                  return (
-                    <div
-                      key={item.historyId}
-                      style={{
-                        display: 'flex',
-                        flexWrap: 'wrap',
-                        justifyContent: 'space-between',
-                        alignItems: 'center',
-                        padding: '1rem',
-                        borderRadius: 'var(--radius-md)',
-                        backgroundColor: 'var(--bg-primary)',
-                        border: '1px solid var(--border-light)',
-                        gap: '1rem'
-                      }}
+                    return (
+                      <div
+                        key={item.historyId}
+                        style={{
+                          display: 'flex',
+                          flexWrap: 'wrap',
+                          justifyContent: 'space-between',
+                          alignItems: 'center',
+                          padding: '1rem',
+                          borderRadius: 'var(--radius-md)',
+                          backgroundColor: 'var(--bg-primary)',
+                          border: '1px solid var(--border-light)',
+                          gap: '1rem'
+                        }}
+                      >
+                        <div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                            <span style={{
+                              backgroundColor: actionBadgeColor,
+                              color: '#fff',
+                              fontSize: '0.65rem',
+                              fontWeight: 700,
+                              padding: '2px 8px',
+                              borderRadius: '4px',
+                              textTransform: 'uppercase'
+                            }}>
+                              {actionText}
+                            </span>
+                            <h4 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 600, color: 'var(--text-primary)' }}>{item.title}</h4>
+                          </div>
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '1rem', marginTop: '0.25rem', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                            <span>Phòng: <strong>{item.roomName}</strong></span>
+                            <span>Người đặt: <strong>{item.userBooked}</strong></span>
+                            <span>Thời gian: {formatDateTime(item.startTime)}</span>
+                          </div>
+                        </div>
+
+                        <div style={{ display: 'flex', gap: '0.5rem' }}>
+                          <button
+                            onClick={() => navigate(`/bookings?tab=approvals&historyId=${item.historyId}`)}
+                            className="btn"
+                            style={{ backgroundColor: 'var(--success)', color: '#fff', fontSize: '0.8rem', padding: '0.5rem 0.875rem' }}
+                          >
+                            <CheckCircle size={14} /> Duyệt
+                          </button>
+                          <button
+                            onClick={() => navigate(`/bookings?tab=approvals&historyId=${item.historyId}`)}
+                            className="btn"
+                            style={{ backgroundColor: 'var(--danger)', color: '#fff', fontSize: '0.8rem', padding: '0.5rem 0.875rem' }}
+                          >
+                            <XCircle size={14} /> Từ chối
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {!isPendingLoading && pendingTotalPages > 1 && (
+                  <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '0.5rem', marginTop: '0.5rem' }}>
+                    <button
+                      type="button"
+                      className="btn btn-ghost"
+                      style={{ padding: '6px 12px', fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '4px' }}
+                      disabled={pendingPage === 0}
+                      onClick={() => setPendingPage(prev => Math.max(0, prev - 1))}
                     >
-                      <div>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
-                          <span style={{
-                            backgroundColor: actionBadgeColor,
-                            color: '#fff',
-                            fontSize: '0.65rem',
-                            fontWeight: 700,
-                            padding: '2px 8px',
-                            borderRadius: '4px',
-                            textTransform: 'uppercase'
-                          }}>
-                            {actionText}
-                          </span>
-                          <h4 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 600, color: 'var(--text-primary)' }}>{item.title}</h4>
-                        </div>
-                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '1rem', marginTop: '0.25rem', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
-                          <span>Phòng: <strong>{item.roomName}</strong></span>
-                          <span>Người đặt: <strong>{item.userBooked}</strong></span>
-                          <span>Thời gian: {formatDateTime(item.startTime)}</span>
-                        </div>
-                      </div>
-
-                      <div style={{ display: 'flex', gap: '0.5rem' }}>
-                        <button
-                          onClick={() => navigate(`/bookings?tab=approvals&historyId=${item.historyId}`)}
-                          className="btn"
-                          style={{ backgroundColor: 'var(--success)', color: '#fff', fontSize: '0.8rem', padding: '0.5rem 0.875rem' }}
-                        >
-                          <CheckCircle size={14} /> Duyệt
-                        </button>
-                        <button
-                          onClick={() => navigate(`/bookings?tab=approvals&historyId=${item.historyId}`)}
-                          className="btn"
-                          style={{ backgroundColor: 'var(--danger)', color: '#fff', fontSize: '0.8rem', padding: '0.5rem 0.875rem' }}
-                        >
-                          <XCircle size={14} /> Từ chối
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })}
+                      <ChevronLeft size={14} /> Trước
+                    </button>
+                    <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                      Trang {pendingPage + 1} / {pendingTotalPages}
+                    </span>
+                    <button
+                      type="button"
+                      className="btn btn-ghost"
+                      style={{ padding: '6px 12px', fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '4px' }}
+                      disabled={pendingPage >= pendingTotalPages - 1}
+                      onClick={() => setPendingPage(prev => Math.min(pendingTotalPages - 1, prev + 1))}
+                    >
+                      Sau <ChevronRight size={14} />
+                    </button>
+                  </div>
+                )}
               </div>
             )}
           </section>
@@ -271,7 +304,7 @@ export const Dashboard: React.FC = () => {
             </div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-              {myBookings?.map((item: any) => (
+              {myBookings?.slice(0, 5).map((item: any) => (
                 <div
                   key={item.id}
                   onClick={() => navigate(`/bookings?bookingId=${item.id}`)}
@@ -309,6 +342,20 @@ export const Dashboard: React.FC = () => {
                   </div>
                 </div>
               ))}
+
+              {myBookings && myBookings.length > 5 && (
+                <div style={{
+                  textAlign: 'center',
+                  padding: '1rem',
+                  borderRadius: 'var(--radius-md)',
+                  border: '1px dashed var(--border-light)',
+                  backgroundColor: 'var(--bg-secondary)',
+                  color: 'var(--text-tertiary)',
+                  fontSize: '0.85rem'
+                }}>
+                  ... và còn <strong>{myBookings.length - 5}</strong> lịch họp khác.
+                </div>
+              )}
             </div>
           )}
         </section>

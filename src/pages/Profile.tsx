@@ -22,7 +22,9 @@ import {
 // Zod schemas
 const profileSchema = z.object({
   fullName: z.string().min(1, 'Họ và tên không được để trống'),
-  phone: z.string().regex(/^(03|05|07|08|09)\d{8}$/, 'Số điện thoại gồm 10 chữ số hợp lệ'),
+  phone: z.string().refine((val) => val === '' || /^(03|05|07|08|09)\d{8}$/.test(val), {
+    message: 'Số điện thoại gồm 10 chữ số hợp lệ',
+  }),
 });
 
 const passwordSchema = z.object({
