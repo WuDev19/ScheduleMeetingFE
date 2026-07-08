@@ -47,28 +47,64 @@ function parseJwt(token: string): any {
 }
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [accessToken, setAccessToken] = useState<string | null>(null);
-  const [user, setUser] = useState<User | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const [accessToken, setAccessToken] = useState<string | null>(() => {
+    const token = localStorage.getItem('accessToken');
+    if (token) {
+      const decoded = parseJwt(token);
+      if (decoded && decoded.exp * 1000 >= Date.now()) {
+        return token;
+      }
+    }
+    return null;
+  });
 
-  const initAuth = () => {
+  const [user, setUser] = useState<User | null>(() => {
+    const token = localStorage.getItem('accessToken');
+    if (token) {
+      const decoded = parseJwt(token);
+      if (decoded && decoded.exp * 1000 >= Date.now()) {
+        return {
+          id: decoded.userId || 0,
+          username: decoded.sub || '',
+          email: decoded.email || decoded.sub || '',
+          roles: decoded.roles || [],
+          permissions: decoded.permissions || [],
+        };
+      }
+    }
+    return null;
+  });
+
+  const [isLoading] = useState(false);
+
+  const logout = async () => {
+    const accToken = localStorage.getItem('accessToken');
+    const refToken = localStorage.getItem('refreshToken');
+
+    localStorage.removeItem('accessToken');
+    localStorage.removeItem('refreshToken');
+    setUser(null);
+    setAccessToken(null);
+
+    if (accToken && refToken) {
+      try {
+        await axios.post('http://localhost:8080/api/v1/auth/logout', {
+          accessToken: accToken,
+          refreshToken: refToken
+        });
+      } catch (e) {
+        console.error('Failed to notify backend logout', e);
+      }
+    }
+  };
+
+  useEffect(() => {
     const token = localStorage.getItem('accessToken');
     if (token) {
       const decoded = parseJwt(token);
       if (decoded) {
-        // Expiration check
         const isExpired = decoded.exp * 1000 < Date.now();
-        if (!isExpired) {
-          setAccessToken(token);
-          setUser({
-            id: decoded.userId || 0,
-            username: decoded.sub || '',
-            email: decoded.email || decoded.sub || '',
-            roles: decoded.roles || [],
-            permissions: decoded.permissions || [],
-          });
-        } else {
-          // Token is expired, let axios client handle it via refresh token or clear
+        if (isExpired) {
           const refresh = localStorage.getItem('refreshToken');
           if (!refresh) {
             logout();
@@ -78,11 +114,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         logout();
       }
     }
-    setIsLoading(false);
-  };
-
-  useEffect(() => {
-    initAuth();
 
     // Listen for logout events dispatched from API client interceptors
     const handleLogoutEvent = () => {
@@ -108,27 +139,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         permissions: decoded.permissions || [],
       });
       setAccessToken(token);
-    }
-  };
-
-  const logout = async () => {
-    const accToken = localStorage.getItem('accessToken');
-    const refToken = localStorage.getItem('refreshToken');
-
-    localStorage.removeItem('accessToken');
-    localStorage.removeItem('refreshToken');
-    setUser(null);
-    setAccessToken(null);
-
-    if (accToken && refToken) {
-      try {
-        await axios.post('http://localhost:8080/api/v1/auth/logout', {
-          accessToken: accToken,
-          refreshToken: refToken
-        });
-      } catch (e) {
-        console.error('Failed to notify backend logout', e);
-      }
     }
   };
 

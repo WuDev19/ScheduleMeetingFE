@@ -59,9 +59,7 @@ export const Users: React.FC = () => {
   const { showToast } = useToast();
   const queryClient = useQueryClient();
 
-  if (!hasRole('ADMIN')) {
-    return <Navigate to="/" replace />;
-  }
+
 
   const [activeTab, setActiveTab] = useState<'users' | 'departments'>('users');
   const [keyword, setKeyword] = useState('');
@@ -389,6 +387,10 @@ export const Users: React.FC = () => {
   const canLock = hasAuthority('USER:LOCK');
   const canUnlock = hasAuthority('USER:UNLOCK');
   const canDelete = hasAuthority('USER:DELETE');
+
+  if (!hasRole('ADMIN')) {
+    return <Navigate to="/" replace />;
+  }
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>

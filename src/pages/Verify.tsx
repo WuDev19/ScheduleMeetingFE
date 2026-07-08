@@ -13,8 +13,12 @@ export const Verify: React.FC = () => {
   const token = searchParams.get('token');
   const email = searchParams.get('email'); // present if verifying new email update
 
-  const [status, setStatus] = useState<'loading' | 'success' | 'error'>('loading');
-  const [errorMsg, setErrorMsg] = useState('');
+  const [status, setStatus] = useState<'loading' | 'success' | 'error'>(() => {
+    return token ? 'loading' : 'error';
+  });
+  const [errorMsg, setErrorMsg] = useState(() => {
+    return token ? '' : 'Đường dẫn xác thực không hợp lệ hoặc thiếu mã xác thực (token).';
+  });
   
   // Resend verification states
   const [resendEmail, setResendEmail] = useState('');
@@ -22,11 +26,7 @@ export const Verify: React.FC = () => {
   const [cooldown, setCooldown] = useState(0);
 
   const verifyToken = async () => {
-    if (!token) {
-      setStatus('error');
-      setErrorMsg('Đường dẫn xác thực không hợp lệ hoặc thiếu mã xác thực (token).');
-      return;
-    }
+    if (!token) return;
 
     try {
       if (email) {
@@ -48,7 +48,9 @@ export const Verify: React.FC = () => {
   };
 
   useEffect(() => {
-    verifyToken();
+    if (token) {
+      verifyToken();
+    }
   }, [token, email]);
 
   // Handle resend verification email
