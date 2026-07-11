@@ -783,7 +783,7 @@ export const Rooms: React.FC = () => {
     <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
       {/* Tab controls */}
       {(isAdmin || canViewUnavailability) && (
-        <div style={{ display: 'flex', borderBottom: '1px solid var(--border-light)', marginBottom: '0.5rem', gap: '1rem' }}>
+        <div style={{ display: 'flex', flexWrap: 'wrap', borderBottom: '1px solid var(--border-light)', marginBottom: '0.5rem', gap: '1rem' }}>
           <button
             onClick={() => setActiveTab('rooms')}
             style={{

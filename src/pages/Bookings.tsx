@@ -2153,7 +2153,7 @@ export const Bookings: React.FC = () => {
       `}</style>
 
       {(isApprover || hasRecurringAccess) && (
-        <div style={{ display: 'flex', gap: '0.5rem', borderBottom: '1px solid var(--border-light)', paddingBottom: '0.5rem', marginBottom: '-0.5rem' }}>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', borderBottom: '1px solid var(--border-light)', paddingBottom: '0.5rem', marginBottom: '-0.5rem' }}>
           <button
             className={`btn ${activeSubTab === 'scheduler' ? 'btn-primary' : 'btn-ghost'}`}
             style={{ fontSize: '0.9rem', padding: '0.5rem 1rem' }}
@@ -2218,7 +2218,7 @@ export const Bookings: React.FC = () => {
           <p style={{ color: 'var(--text-tertiary)', fontSize: '0.85rem' }}>Tra cứu, đăng ký, xuất Excel và phê duyệt yêu cầu sử dụng phòng</p>
         </div>
 
-        <div style={{ display: 'flex', gap: '0.5rem' }}>
+        <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
           <button className="btn btn-secondary" onClick={handleExportExcel}>
             <FileSpreadsheet size={16} /> Xuất Excel
           </button>
@@ -2472,9 +2472,11 @@ export const Bookings: React.FC = () => {
               <div className="skeleton" style={{ height: '80px', width: '100%' }} />
             </div>
           ) : viewMode === 'calendar' ? (
-            calendarViewType === 'MONTH' ? renderMonthCalendar() :
-              calendarViewType === 'WEEK' ? renderWeekCalendar() :
-                renderDayCalendar()
+            <div className="calendar-body-wrapper">
+              {calendarViewType === 'MONTH' ? renderMonthCalendar() :
+                calendarViewType === 'WEEK' ? renderWeekCalendar() :
+                  renderDayCalendar()}
+            </div>
           ) : (() => {
             const listItems: any[] = viewMode === 'list' ? (bookings as any)?.content ?? [] : [];
             const totalPages: number = viewMode === 'list' ? (bookings as any)?.totalPages ?? 1 : 1;
@@ -3222,7 +3224,7 @@ export const Bookings: React.FC = () => {
             <div className="modal-footer" style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
 
               {showCancelConfirm ? (
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem' }}>
+                <div className="form-grid-2" style={{ gap: '0.5rem' }}>
                   <button
                     type="button"
                     className="btn btn-secondary"
@@ -4006,7 +4008,7 @@ export const Bookings: React.FC = () => {
                       });
 
                       return (
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.25rem' }}>
+                        <div className="form-grid-2" style={{ gap: '1.25rem' }}>
 
                           {/* Left Card: Old equipment list */}
                           <div className="glass-card" style={{
@@ -4195,7 +4197,7 @@ export const Bookings: React.FC = () => {
 
                 ) : (
                   /* UPDATED: Two columns side by side: Left is Old, Right is New */
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.25rem' }}>
+                  <div className="form-grid-2" style={{ gap: '1.25rem' }}>
 
                     {/* Left Card: Old Info (Reddish border, soft shadow) */}
                     <div className="glass-card" style={{

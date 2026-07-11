@@ -308,13 +308,6 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) =>
         </div>
       </aside>
 
-      {/* MOBILE HEADER BUTTONS */}
-      <div className="mobile-header-trigger" style={{ display: 'none' }}>
-        <button className="btn btn-ghost" onClick={() => setIsSidebarOpen(true)}>
-          <Menu size={24} />
-        </button>
-        <h2 style={{ fontSize: '1.2rem', margin: 0 }}>ScheduleMeeting</h2>
-      </div>
 
       {/* SIDEBAR OVERLAY FOR MOBILE */}
       {isSidebarOpen && (
@@ -422,7 +415,7 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) =>
                   />
 
                   <div
-                    className="glass-card"
+                    className="glass-card notification-drawer"
                     style={{
                       position: 'absolute',
                       top: '50px',
@@ -743,21 +736,23 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) =>
           .sidebar-open {
             transform: translateX(260px);
           }
-          .mobile-header-trigger {
-            display: flex !important;
-            align-items: center;
-            gap: 1rem;
-            height: 60px;
-            padding: 0 1rem;
-            background-color: var(--bg-secondary);
-            border-bottom: 1px solid var(--border-light);
-          }
           .mobile-burger-btn {
             display: block !important;
           }
           header {
             position: sticky;
             top: 0;
+            padding: 0 1rem !important;
+          }
+          main {
+            padding: 1.25rem !important;
+          }
+        }
+        @media (max-width: 480px) {
+          .notification-drawer {
+            width: calc(100vw - 2.5rem) !important;
+            max-width: 360px !important;
+            right: -10px !important;
           }
         }
       `}</style>

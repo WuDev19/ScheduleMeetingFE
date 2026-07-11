@@ -267,7 +267,7 @@ export const Profile: React.FC = () => {
         <p style={{ color: 'var(--text-tertiary)', fontSize: '0.85rem' }}>Quản lý thông tin cá nhân, cập nhật email và mật khẩu</p>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '2rem' }} className="grid-cols-2">
+      <div style={{ display: 'grid', gap: '2rem' }} className="grid-cols-2">
 
         {/* Left column: Profile card */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>

@@ -402,7 +402,7 @@ export const Users: React.FC = () => {
           <p style={{ color: 'var(--text-tertiary)', fontSize: '0.85rem' }}>Quản lý tài khoản thành viên và thiết lập sơ đồ phòng ban công ty</p>
         </div>
 
-        <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
+        <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', flexWrap: 'wrap' }}>
           {activeTab === 'users' && isAdmin && (
             <button
               className="btn btn-primary"
@@ -445,7 +445,7 @@ export const Users: React.FC = () => {
       </div>
 
       {/* Tab Switcher */}
-      <div style={{ display: 'flex', gap: '0.5rem', borderBottom: '1px solid var(--border-light)', paddingBottom: '2px' }}>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', borderBottom: '1px solid var(--border-light)', paddingBottom: '2px' }}>
         <button
           onClick={() => setActiveTab('users')}
           style={{
@@ -501,7 +501,7 @@ export const Users: React.FC = () => {
 
           {/* Users Grid */}
           {isUsersLoading ? (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: '1.5rem' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '1.5rem' }}>
               <div className="skeleton" style={{ height: '180px', borderRadius: 'var(--radius-lg)' }} />
               <div className="skeleton" style={{ height: '180px', borderRadius: 'var(--radius-lg)' }} />
               <div className="skeleton" style={{ height: '180px', borderRadius: 'var(--radius-lg)' }} />
@@ -511,7 +511,7 @@ export const Users: React.FC = () => {
               Không tìm thấy tài khoản nhân viên nào khớp với từ khóa tìm kiếm.
             </div>
           ) : (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: '1.5rem' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '1.5rem' }}>
               {usersList.map((item: any) => (
                 <div
                   key={item.id}
@@ -680,7 +680,7 @@ export const Users: React.FC = () => {
           </div>
 
           {isDeptLoading ? (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '1.5rem' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '1.5rem' }}>
               <div className="skeleton" style={{ height: '150px', borderRadius: 'var(--radius-lg)' }} />
               <div className="skeleton" style={{ height: '150px', borderRadius: 'var(--radius-lg)' }} />
               <div className="skeleton" style={{ height: '150px', borderRadius: 'var(--radius-lg)' }} />
@@ -691,7 +691,7 @@ export const Users: React.FC = () => {
             </div>
           ) : (
             <>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '1.5rem' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '1.5rem' }}>
                 {deptList.map((dept: any) => (
                   <div
                     key={dept.id}
@@ -782,7 +782,7 @@ export const Users: React.FC = () => {
             </div>
 
             <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+              <div className="form-grid-2">
                 <div className="form-group">
                   <label className="form-label" htmlFor="user-username">Tên đăng nhập *</label>
                   <input
@@ -830,7 +830,7 @@ export const Users: React.FC = () => {
                 {createErrors.password && <span className="form-error">{createErrors.password.message}</span>}
               </div>
 
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+              <div className="form-grid-2">
                 <div className="form-group">
                   <label className="form-label" htmlFor="user-fullname">Họ và tên *</label>
                   <input
@@ -854,7 +854,7 @@ export const Users: React.FC = () => {
                 </div>
               </div>
 
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+              <div className="form-grid-2">
                 <div className="form-group">
                   <label className="form-label" htmlFor="user-role">Vai trò *</label>
                   <select id="user-role" className="form-control" {...createRegister('role')}>

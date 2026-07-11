@@ -318,6 +318,8 @@ export const Dashboard: React.FC = () => {
                     display: 'flex',
                     justifyContent: 'space-between',
                     alignItems: 'center',
+                    flexWrap: 'wrap',
+                    gap: '1rem',
                     transition: 'all var(--transition-fast)'
                   }}
                 >

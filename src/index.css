@@ -381,13 +381,47 @@ a:hover {
 .grid-cols-2 { display: grid; grid-template-columns: 1fr; gap: 1.5rem; }
 .grid-cols-3 { display: grid; grid-template-columns: 1fr; gap: 1.5rem; }
 
-@media (min-width: 768px) {
+@media (min-width: 640px) {
   .grid-cols-2 { grid-template-columns: repeat(2, 1fr); }
+  .grid-cols-3 { grid-template-columns: repeat(2, 1fr); }
+}
+
+@media (min-width: 1100px) {
   .grid-cols-3 { grid-template-columns: repeat(3, 1fr); }
 }
 
-@media (min-width: 1024px) {
-  .grid-cols-3 { grid-template-columns: repeat(3, 1fr); }
+/* Responsive Table Wrapper */
+.table-responsive {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  width: 100%;
+}
+
+/* Form Grid 2-Column Responsive Layout */
+.form-grid-2 {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 1rem;
+}
+
+@media (min-width: 576px) {
+  .form-grid-2 {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+/* Calendar Body Scroll Wrapper */
+.calendar-body-wrapper {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  width: 100%;
+}
+
+@media (max-width: 768px) {
+  .calendar-header-row,
+  .calendar-grid {
+    min-width: 700px;
+  }
 }
 
 /* Modal Overlay Styling */
