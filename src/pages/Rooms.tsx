@@ -164,8 +164,8 @@ export const Rooms: React.FC = () => {
 
     const value = Number(input.value);
 
-    if (value < 0) {
-      input.value = "0";
+    if (value <= 0) {
+      input.value = "1";
       input.dispatchEvent(new Event("input", { bubbles: true }));
     }
   };
@@ -890,8 +890,18 @@ export const Rooms: React.FC = () => {
               className="form-control"
               style={{ width: '130px' }}
               placeholder="Tầng..."
+              min={1}
+              onKeyDown={preventNegativeNumber}
               value={filterFloor}
-              onChange={(e) => handleFloorChange(Math.max(Number(e.target.value), 0).toString())}
+              onChange={(e) => {
+                const val = e.target.value;
+                if (val === '') {
+                  handleFloorChange('');
+                } else {
+                  const num = Number(val);
+                  handleFloorChange(num > 0 ? val : '1');
+                }
+              }}
             />
 
             <input
@@ -899,8 +909,18 @@ export const Rooms: React.FC = () => {
               className="form-control"
               style={{ width: '150px' }}
               placeholder="Nhập sức chứa..."
+              min={1}
+              onKeyDown={preventNegativeNumber}
               value={filterCapacity}
-              onChange={(e) => handleCapacityChange(Math.max(Number(e.target.value), 1).toString())}
+              onChange={(e) => {
+                const val = e.target.value;
+                if (val === '') {
+                  handleCapacityChange('');
+                } else {
+                  const num = Number(val);
+                  handleCapacityChange(num > 0 ? val : '1');
+                }
+              }}
             />
 
             <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
@@ -1564,8 +1584,12 @@ export const Rooms: React.FC = () => {
                           className="form-control"
                           style={{ width: '75px' }}
                           onBlur={(e) => {
-                            const newQty = Number(e.target.value);
-                            if (newQty > 0 && eq.roomEquipmentId && newQty !== (eq.quantity || eq.usingQuantity)) {
+                            let newQty = Number(e.target.value);
+                            if (e.target.value === '' || newQty <= 0) {
+                              newQty = 1;
+                              e.target.value = "1";
+                            }
+                            if (eq.roomEquipmentId && newQty !== (eq.quantity || eq.usingQuantity)) {
                               updateRoomEquipQtyMutation.mutate({
                                 roomId: selectedRoom.id,
                                 reId: eq.roomEquipmentId,
@@ -1617,7 +1641,7 @@ export const Rooms: React.FC = () => {
 
                       <input
                         type="number"
-                        min={0}
+                        min={1}
                         onKeyDown={preventNegativeNumber}
                         onInput={normalizeNegativeNumber}
                         className="form-control"
@@ -1709,6 +1733,7 @@ export const Rooms: React.FC = () => {
                   <input
                     id="book-attendees"
                     type="number"
+                    min={1}
                     onKeyDown={preventNegativeNumber}
                     onInput={normalizeNegativeNumber}
                     className="form-control"
@@ -1793,6 +1818,7 @@ export const Rooms: React.FC = () => {
 
                       <input
                         type="number"
+                        min={1}
                         className="form-control"
                         style={{ width: '80px' }}
                         placeholder="SL"

@@ -92,13 +92,36 @@ const formatDateTimeForApi = (dateTimeStr: string): string => {
   return `${yyyy}-${MM}-${dd} ${hh}:${mm}:${ss}${offsetSign}${offsetHours}:${offsetMins}`;
 };
 
+const preventNegativeNumber = (
+  e: React.KeyboardEvent<HTMLInputElement>
+) => {
+  if (["-", "+", "e", "E"].includes(e.key)) {
+    e.preventDefault();
+  }
+};
+
+const normalizeNegativeNumber = (
+  e: React.FormEvent<HTMLInputElement>
+) => {
+  const input = e.currentTarget;
+
+  if (input.value === "") return;
+
+  const value = Number(input.value);
+
+  if (value <= 0) {
+    input.value = "1";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  }
+};
+
 const EquipmentRow: React.FC<{
   eq: any;
   canEdit: boolean;
   onUpdate: (quantity: number) => void;
   isPending: boolean;
 }> = ({ eq, canEdit, onUpdate, isPending }) => {
-  const [qty, setQty] = useState(eq.usingQuantity || eq.quantity || 1);
+  const [qty, setQty] = useState<number | ''>(eq.usingQuantity || eq.quantity || 1);
   const [isEditing, setIsEditing] = useState(false);
 
   useEffect(() => {
@@ -128,8 +151,18 @@ const EquipmentRow: React.FC<{
               className="form-control"
               style={{ width: '60px', padding: '2px 5px', fontSize: '0.75rem', height: '26px' }}
               min={1}
+              onKeyDown={preventNegativeNumber}
+              onInput={normalizeNegativeNumber}
               value={qty}
-              onChange={(e) => setQty(Math.max(1, parseInt(e.target.value, 10) || 1))}
+              onChange={(e) => {
+                const val = e.target.value;
+                if (val === '') {
+                  setQty('');
+                } else {
+                  const parsed = parseInt(val, 10);
+                  setQty(isNaN(parsed) || parsed <= 0 ? 1 : parsed);
+                }
+              }}
             />
             <button
               type="button"
@@ -144,11 +177,12 @@ const EquipmentRow: React.FC<{
               }}
               disabled={isPending}
               onClick={() => {
-                if (qty === (eq.usingQuantity || eq.quantity)) {
+                const finalQty = qty === '' ? (eq.usingQuantity || eq.quantity || 1) : qty;
+                if (finalQty === (eq.usingQuantity || eq.quantity)) {
                   setIsEditing(false);
                   return;
                 }
-                onUpdate(qty);
+                onUpdate(finalQty);
                 setIsEditing(false);
               }}
             >
@@ -372,7 +406,7 @@ export const Bookings: React.FC = () => {
 
   // Modals state
   const [activeModal, setActiveModal] = useState<'create' | 'detail' | 'edit' | 'approval-detail' | 'add-equipment' | 'add-participants' | 'create-recurring' | null>(null);
-  const [addEquipRows, setAddEquipRows] = useState<{ equipmentId: number; quantity: number; action: 'ADD' | 'DELETE' }[]>([]);
+  const [addEquipRows, setAddEquipRows] = useState<{ equipmentId: number; quantity: number | ''; action: 'ADD' | 'DELETE' }[]>([]);
   const [participantsInput, setParticipantsInput] = useState('');
   const [selectedBooking, setSelectedBooking] = useState<any>(null);
   const [selectedHistory, setSelectedHistory] = useState<any>(null);
@@ -892,10 +926,10 @@ export const Bookings: React.FC = () => {
 
   // ADD EQUIPMENT MUTATION
   const addEquipmentMutation = useMutation({
-    mutationFn: async ({ bookingId, rows }: { bookingId: number; rows: { equipmentId: number; quantity: number; action: string }[] }) => {
+    mutationFn: async ({ bookingId, rows }: { bookingId: number; rows: { equipmentId: number; quantity: number | ''; action: string }[] }) => {
       const payload = rows.map(r => ({
         equipmentId: parseInt(String(r.equipmentId), 10),
-        quantity: r.action === 'DELETE' ? 1 : parseInt(String(r.quantity), 10),
+        quantity: r.action === 'DELETE' ? 1 : (parseInt(String(r.quantity), 10) || 1),
         action: r.action
       }));
       await apiClient.post(`/booking/${bookingId}/equipment`, payload);
@@ -2671,6 +2705,9 @@ export const Bookings: React.FC = () => {
                   <input
                     id="book-attendees"
                     type="number"
+                    min={1}
+                    onKeyDown={preventNegativeNumber}
+                    onInput={normalizeNegativeNumber}
                     className="form-control"
                     placeholder="8"
                     {...register('attendee')}
@@ -2839,6 +2876,9 @@ export const Bookings: React.FC = () => {
 
                       <input
                         type="number"
+                        min={1}
+                        onKeyDown={preventNegativeNumber}
+                        onInput={normalizeNegativeNumber}
                         className="form-control"
                         style={{ width: '80px' }}
                         placeholder="SL"
@@ -2966,6 +3006,8 @@ export const Bookings: React.FC = () => {
                     id="recur-recurrence-interval"
                     type="number"
                     min={1}
+                    onKeyDown={preventNegativeNumber}
+                    onInput={normalizeNegativeNumber}
                     className="form-control"
                     {...register('recurrenceInterval')}
                   />
@@ -3069,6 +3111,9 @@ export const Bookings: React.FC = () => {
                   <input
                     id="edit-attendees"
                     type="number"
+                    min={1}
+                    onKeyDown={preventNegativeNumber}
+                    onInput={normalizeNegativeNumber}
                     className="form-control"
                     placeholder="8"
                     {...registerEdit('attendee')}
@@ -3610,9 +3655,9 @@ export const Bookings: React.FC = () => {
                             className="form-control"
                             style={{ width: '72px', flexShrink: 0, fontSize: '0.8rem', padding: '0.35rem 0.5rem' }}
                             placeholder="SL"
-                            min={1}
+                            min={1} onKeyDown={preventNegativeNumber}
                             value={row.quantity}
-                            onChange={e => setAddEquipRows(prev => prev.map((r, i) => i === idx ? { ...r, quantity: Math.max(1, Number(e.target.value)) } : r))}
+                            onChange={e => { const val = e.target.value; setAddEquipRows(prev => prev.map((r, i) => i === idx ? { ...r, quantity: val === '' ? '' : (Number(val) > 0 ? Number(val) : 1) } : r)); }}
                           />
                         )}
 
