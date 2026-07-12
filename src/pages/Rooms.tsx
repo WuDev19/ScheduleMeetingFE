@@ -58,13 +58,13 @@ const formatDateTimeLocal = (dateTimeStr: string | undefined | null): string => 
 // Form validation schemas
 const roomSchema = z.object({
   roomName: z.string().min(1, 'Vui lòng nhập tên phòng'),
-  capacity: z.coerce.number().min(1, 'Sức chứa phải lớn hơn hoặc bằng 1'),
-  floorNumber: z.coerce.number().min(1, 'Số tầng không hợp lệ'),
+  capacity: z.coerce.number({ message: 'Sức chứa phải là một số' }).min(1, 'Sức chứa phải lớn hơn hoặc bằng 1'),
+  floorNumber: z.coerce.number({ message: 'Số tầng không hợp lệ' }).min(1, 'Số tầng không hợp lệ'),
   description: z.string().optional(),
-  buildingId: z.coerce.number().min(1, 'Vui lòng chọn tòa nhà'),
+  buildingId: z.coerce.number({ message: 'Vui lòng chọn tòa nhà' }).min(1, 'Vui lòng chọn tòa nhà'),
   equipments: z.array(z.object({
-    equipmentId: z.coerce.number().min(1, 'Vui lòng chọn thiết bị'),
-    quantity: z.coerce.number().min(1, 'Số lượng tối thiểu là 1')
+    equipmentId: z.coerce.number({ message: 'Vui lòng chọn thiết bị' }).min(1, 'Vui lòng chọn thiết bị'),
+    quantity: z.coerce.number({ message: 'Vui lòng nhập một số hợp lệ' }).min(1, 'Số lượng tối thiểu là 1')
   })).optional()
 });
 
@@ -73,28 +73,60 @@ const roomSchema = z.object({
 const bookingFormSchema = z.object({
   title: z.string().min(1, 'Vui lòng nhập tiêu đề cuộc họp'),
   description: z.string().optional(),
-  roomId: z.coerce.number().min(1, 'Vui lòng chọn phòng họp'),
+  roomId: z.coerce.number({ message: 'Vui lòng chọn phòng họp' }).min(1, 'Vui lòng chọn phòng họp'),
   start: z.string().min(1, 'Vui lòng chọn thời gian bắt đầu'),
   end: z.string().min(1, 'Vui lòng chọn thời gian kết thúc'),
-  attendee: z.coerce.number().min(1, 'Số lượng tham gia tối thiểu là 1'),
+  attendee: z.coerce.number({ message: 'Vui lòng nhập một số hợp lệ' }).min(1, 'Số lượng tham gia tối thiểu là 1'),
   receiversInput: z.string().optional(),
   equipments: z.array(z.object({
-    equipmentId: z.coerce.number().min(1, 'Chọn thiết bị'),
-    quantity: z.coerce.number().min(1, 'Số lượng tối thiểu là 1')
+    equipmentId: z.coerce.number({ message: 'Chọn thiết bị' }).min(1, 'Chọn thiết bị'),
+    quantity: z.coerce.number({ message: 'Vui lòng nhập một số hợp lệ' }).min(1, 'Số lượng tối thiểu là 1')
   })).optional()
-}).refine((data) => new Date(data.start) < new Date(data.end), {
-  message: "Thời gian kết thúc phải diễn ra sau thời gian bắt đầu",
-  path: ["end"]
+}).superRefine((data, ctx) => {
+  if (data.start && data.end) {
+    if (new Date(data.start) >= new Date(data.end)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Thời gian kết thúc phải diễn ra sau thời gian bắt đầu",
+        path: ["end"]
+      });
+    }
+    const startDatePart = data.start.split('T')[0];
+    const endDatePart = data.end.split('T')[0];
+    if (startDatePart !== endDatePart) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Thời gian họp không được kéo dài xuyên đêm (phải kết thúc trong cùng ngày bắt đầu)",
+        path: ["end"]
+      });
+    }
+    const startTimePart = data.start.split('T')[1];
+    const endTimePart = data.end.split('T')[1];
+    if (startTimePart < "08:00") {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Thời gian họp phải nằm trong giờ hành chính (từ 08:00 đến 17:30)",
+        path: ["start"]
+      });
+    }
+    if (endTimePart > "17:30") {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Thời gian họp phải nằm trong giờ hành chính (từ 08:00 đến 17:30)",
+        path: ["end"]
+      });
+    }
+  }
 });
 
 const equipmentSchema = z.object({
   equipmentName: z.string().min(1, 'Tên thiết bị không được để trống'),
   description: z.string().optional().or(z.literal('')),
-  availableQuantity: z.coerce.number().min(0, 'Số lượng tối thiểu là 0')
+  availableQuantity: z.coerce.number({ message: 'Vui lòng nhập một số hợp lệ' }).min(0, 'Số lượng tối thiểu là 0')
 });
 
 const unavailabilitySchema = z.object({
-  roomId: z.coerce.number().min(1, 'Vui lòng chọn phòng họp'),
+  roomId: z.coerce.number({ message: 'Vui lòng chọn phòng họp' }).min(1, 'Vui lòng chọn phòng họp'),
   reason: z.string().min(1, 'Vui lòng nhập lý do không khả dụng'),
   start: z.string().min(1, 'Vui lòng chọn thời gian bắt đầu'),
   end: z.string().min(1, 'Vui lòng chọn thời gian kết thúc'),
@@ -144,29 +176,6 @@ export const Rooms: React.FC = () => {
     if (val !== '') {
       setFilterStart('');
       setFilterEnd('');
-    }
-  };
-
-  const preventNegativeNumber = (
-    e: React.KeyboardEvent<HTMLInputElement>
-  ) => {
-    if (["-", "+", "e", "E"].includes(e.key)) {
-      e.preventDefault();
-    }
-  };
-
-  const normalizeNegativeNumber = (
-    e: React.FormEvent<HTMLInputElement>
-  ) => {
-    const input = e.currentTarget;
-
-    if (input.value === "") return;
-
-    const value = Number(input.value);
-
-    if (value <= 0) {
-      input.value = "1";
-      input.dispatchEvent(new Event("input", { bubbles: true }));
     }
   };
 
@@ -886,15 +895,15 @@ export const Rooms: React.FC = () => {
 
 
             <input
-              type="number"
+              type="text"
+              inputMode="numeric"
+              pattern="[0-9]*"
               className="form-control"
               style={{ width: '130px' }}
               placeholder="Tầng..."
-              min={1}
-              onKeyDown={preventNegativeNumber}
               value={filterFloor}
               onChange={(e) => {
-                const val = e.target.value;
+                const val = e.target.value.replace(/[^0-9]/g, '').replace(/^0+/, '');
                 if (val === '') {
                   handleFloorChange('');
                 } else {
@@ -905,15 +914,15 @@ export const Rooms: React.FC = () => {
             />
 
             <input
-              type="number"
+              type="text"
+              inputMode="numeric"
+              pattern="[0-9]*"
               className="form-control"
               style={{ width: '150px' }}
               placeholder="Nhập sức chứa..."
-              min={1}
-              onKeyDown={preventNegativeNumber}
               value={filterCapacity}
               onChange={(e) => {
-                const val = e.target.value;
+                const val = e.target.value.replace(/[^0-9]/g, '').replace(/^0+/, '');
                 if (val === '') {
                   handleCapacityChange('');
                 } else {
@@ -1513,13 +1522,16 @@ export const Rooms: React.FC = () => {
                   <label className="form-label" htmlFor="room-capacity">Sức chứa (người) *</label>
                   <input
                     id="room-capacity"
-                    type="number"
+                    type="text"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
                     className="form-control"
                     placeholder="12"
-                    min={1}
-                    onKeyDown={preventNegativeNumber}
-                    onInput={normalizeNegativeNumber}
-                    {...roomRegister('capacity')}
+                    {...roomRegister('capacity', {
+                      onChange: (e) => {
+                        e.target.value = e.target.value.replace(/[^0-9]/g, '').replace(/^0+/, '');
+                      }
+                    })}
                   />
                   {roomErrors.capacity && <span className="form-error">{roomErrors.capacity.message}</span>}
                 </div>
@@ -1528,13 +1540,16 @@ export const Rooms: React.FC = () => {
                   <label className="form-label" htmlFor="room-floor">Ở Tầng số *</label>
                   <input
                     id="room-floor"
-                    min={1}
-                    type="number"
-                    onKeyDown={preventNegativeNumber}
-                    onInput={normalizeNegativeNumber}
+                    type="text"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
                     className="form-control"
                     placeholder="2"
-                    {...roomRegister('floorNumber')}
+                    {...roomRegister('floorNumber', {
+                      onChange: (e) => {
+                        e.target.value = e.target.value.replace(/[^0-9]/g, '').replace(/^0+/, '');
+                      }
+                    })}
                   />
                   {roomErrors.floorNumber && <span className="form-error">{roomErrors.floorNumber.message}</span>}
                 </div>
@@ -1576,16 +1591,17 @@ export const Rooms: React.FC = () => {
                           {eq.equipmentName || eq.name}
                         </span>
                         <input
-                          type="number"
-                          min={1}
-                          onKeyDown={preventNegativeNumber}
-                          onInput={normalizeNegativeNumber}
+                          type="text"
+                          inputMode="numeric"
+                          pattern="[0-9]*"
                           defaultValue={eq.quantity || eq.usingQuantity || 1}
                           className="form-control"
                           style={{ width: '75px' }}
                           onBlur={(e) => {
-                            let newQty = Number(e.target.value);
-                            if (e.target.value === '' || newQty <= 0) {
+                            const val = e.target.value.replace(/[^0-9]/g, '').replace(/^0+/, '');
+                            e.target.value = val;
+                            let newQty = Number(val);
+                            if (val === '' || newQty <= 0) {
                               newQty = 1;
                               e.target.value = "1";
                             }
@@ -1640,14 +1656,17 @@ export const Rooms: React.FC = () => {
                       </select>
 
                       <input
-                        type="number"
-                        min={1}
-                        onKeyDown={preventNegativeNumber}
-                        onInput={normalizeNegativeNumber}
+                        type="text"
+                        inputMode="numeric"
+                        pattern="[0-9]*"
                         className="form-control"
                         style={{ width: '80px' }}
                         placeholder="SL"
-                        {...roomRegister(`equipments.${index}.quantity` as const)}
+                        {...roomRegister(`equipments.${index}.quantity` as const, {
+                          onChange: (e) => {
+                            e.target.value = e.target.value.replace(/[^0-9]/g, '').replace(/^0+/, '');
+                          }
+                        })}
                       />
 
                       <button
@@ -1732,13 +1751,16 @@ export const Rooms: React.FC = () => {
                   <label className="form-label" htmlFor="book-attendees">Số người tham dự họp *</label>
                   <input
                     id="book-attendees"
-                    type="number"
-                    min={1}
-                    onKeyDown={preventNegativeNumber}
-                    onInput={normalizeNegativeNumber}
+                    type="text"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
                     className="form-control"
                     placeholder="8"
-                    {...bookingRegister('attendee')}
+                    {...bookingRegister('attendee', {
+                      onChange: (e) => {
+                        e.target.value = e.target.value.replace(/[^0-9]/g, '').replace(/^0+/, '');
+                      }
+                    })}
                   />
                   {bookingErrors.attendee && <span className="form-error">{bookingErrors.attendee.message}</span>}
                 </div>
@@ -1817,14 +1839,17 @@ export const Rooms: React.FC = () => {
                       </select>
 
                       <input
-                        type="number"
-                        min={1}
+                        type="text"
+                        inputMode="numeric"
+                        pattern="[0-9]*"
                         className="form-control"
                         style={{ width: '80px' }}
                         placeholder="SL"
-                        onKeyDown={preventNegativeNumber}
-                        onInput={normalizeNegativeNumber}
-                        {...bookingRegister(`equipments.${index}.quantity` as const)}
+                        {...bookingRegister(`equipments.${index}.quantity` as const, {
+                          onChange: (e) => {
+                            e.target.value = e.target.value.replace(/[^0-9]/g, '').replace(/^0+/, '');
+                          }
+                        })}
                       />
 
                       <button
@@ -1895,13 +1920,16 @@ export const Rooms: React.FC = () => {
                 <label className="form-label" htmlFor="equip-quantity">Tổng số lượng sở hữu *</label>
                 <input
                   id="equip-quantity"
-                  type="number"
-                  onKeyDown={preventNegativeNumber}
-                  onInput={normalizeNegativeNumber}
+                  type="text"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
                   className="form-control"
                   placeholder="10"
-                  min={1}
-                  {...equipRegister('availableQuantity')}
+                  {...equipRegister('availableQuantity', {
+                    onChange: (e) => {
+                      e.target.value = e.target.value.replace(/[^0-9]/g, '').replace(/^0+(?!$)/, '');
+                    }
+                  })}
                 />
                 {equipErrors.availableQuantity && <span className="form-error">{equipErrors.availableQuantity.message}</span>}
               </div>

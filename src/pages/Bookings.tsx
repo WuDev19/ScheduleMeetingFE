@@ -92,29 +92,6 @@ const formatDateTimeForApi = (dateTimeStr: string): string => {
   return `${yyyy}-${MM}-${dd} ${hh}:${mm}:${ss}${offsetSign}${offsetHours}:${offsetMins}`;
 };
 
-const preventNegativeNumber = (
-  e: React.KeyboardEvent<HTMLInputElement>
-) => {
-  if (["-", "+", "e", "E"].includes(e.key)) {
-    e.preventDefault();
-  }
-};
-
-const normalizeNegativeNumber = (
-  e: React.FormEvent<HTMLInputElement>
-) => {
-  const input = e.currentTarget;
-
-  if (input.value === "") return;
-
-  const value = Number(input.value);
-
-  if (value <= 0) {
-    input.value = "1";
-    input.dispatchEvent(new Event("input", { bubbles: true }));
-  }
-};
-
 const EquipmentRow: React.FC<{
   eq: any;
   canEdit: boolean;
@@ -147,15 +124,14 @@ const EquipmentRow: React.FC<{
         {isEditing && canEdit ? (
           <>
             <input
-              type="number"
+              type="text"
+              inputMode="numeric"
+              pattern="[0-9]*"
               className="form-control"
               style={{ width: '60px', padding: '2px 5px', fontSize: '0.75rem', height: '26px' }}
-              min={1}
-              onKeyDown={preventNegativeNumber}
-              onInput={normalizeNegativeNumber}
               value={qty}
               onChange={(e) => {
-                const val = e.target.value;
+                const val = e.target.value.replace(/[^0-9]/g, '').replace(/^0+/, '');
                 if (val === '') {
                   setQty('');
                 } else {
@@ -236,12 +212,12 @@ const EquipmentRow: React.FC<{
 const bookingFormSchema = z.object({
   title: z.string().optional(),
   description: z.string().optional(),
-  roomId: z.coerce.number().min(1, 'Vui lòng chọn phòng họp'),
-  attendee: z.coerce.number().optional(),
+  roomId: z.coerce.number({ message: 'Vui lòng chọn phòng họp' }).min(1, 'Vui lòng chọn phòng họp'),
+  attendee: z.coerce.number({ message: 'Vui lòng nhập một số hợp lệ' }).optional(),
   receiversInput: z.string().optional(), // Comma separated emails, will convert to receivers list
   equipments: z.array(z.object({
-    equipmentId: z.coerce.number().min(1, 'Chọn thiết bị'),
-    quantity: z.coerce.number().min(1, 'Số lượng tối thiểu là 1')
+    equipmentId: z.coerce.number({ message: 'Chọn thiết bị' }).min(1, 'Chọn thiết bị'),
+    quantity: z.coerce.number({ message: 'Vui lòng nhập một số hợp lệ' }).min(1, 'Số lượng tối thiểu là 1')
   })).optional(),
 
   // Single booking fields
@@ -251,7 +227,12 @@ const bookingFormSchema = z.object({
   // Recurring booking fields
   isRecurring: z.boolean().default(false),
   recurrenceType: z.enum(['DAILY', 'WEEKLY']).optional(),
-  recurrenceInterval: z.coerce.number().min(1).optional(),
+  recurrenceInterval: z.preprocess(
+    (val) => (val === '' || val === null || val === undefined ? undefined : val),
+    z.coerce.number({ message: 'Vui lòng nhập một số hợp lệ' })
+      .min(1, 'Khoảng thời gian lặp tối thiểu là 1')
+      .optional()
+  ),
   startDate: z.string().optional(),
   endDate: z.string().optional(),
   meetingStartTime: z.string().optional(),
@@ -287,12 +268,39 @@ const bookingFormSchema = z.object({
         path: ["end"]
       });
     }
-    if (data.start && data.end && new Date(data.start) >= new Date(data.end)) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: "Thời gian kết thúc phải diễn ra sau thời gian bắt đầu",
-        path: ["end"]
-      });
+    if (data.start && data.end) {
+      if (new Date(data.start) >= new Date(data.end)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "Thời gian kết thúc phải diễn ra sau thời gian bắt đầu",
+          path: ["end"]
+        });
+      }
+      const startDatePart = data.start.split('T')[0];
+      const endDatePart = data.end.split('T')[0];
+      if (startDatePart !== endDatePart) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "Thời gian họp không được kéo dài xuyên đêm (phải kết thúc trong cùng ngày bắt đầu)",
+          path: ["end"]
+        });
+      }
+      const startTimePart = data.start.split('T')[1];
+      const endTimePart = data.end.split('T')[1];
+      if (startTimePart < "08:00") {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "Thời gian họp phải nằm trong giờ hành chính (từ 08:00 đến 17:30)",
+          path: ["start"]
+        });
+      }
+      if (endTimePart > "17:30") {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "Thời gian họp phải nằm trong giờ hành chính (từ 08:00 đến 17:30)",
+          path: ["end"]
+        });
+      }
     }
   } else {
     if (!data.startDate) {
@@ -330,16 +338,19 @@ const bookingFormSchema = z.object({
         path: ["meetingEndTime"]
       });
     }
-    if (data.meetingStartTime && data.meetingEndTime) {
-      const startT = data.meetingStartTime;
-      const endT = data.meetingEndTime;
-      if (startT >= endT) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: "Giờ kết thúc phải diễn ra sau giờ bắt đầu",
-          path: ["meetingEndTime"]
-        });
-      }
+    if (data.meetingStartTime && data.meetingStartTime < "08:00") {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Thời gian họp phải nằm trong giờ hành chính (từ 08:00 đến 17:30)",
+        path: ["meetingStartTime"]
+      });
+    }
+    if (data.meetingEndTime && data.meetingEndTime > "17:30") {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Thời gian họp phải nằm trong giờ hành chính (từ 08:00 đến 17:30)",
+        path: ["meetingEndTime"]
+      });
     }
     if (data.recurrenceType === 'WEEKLY' && (!data.dayOfWeeks || data.dayOfWeeks.length === 0)) {
       ctx.addIssue({
@@ -356,13 +367,45 @@ type BookingFormValues = z.infer<typeof bookingFormSchema>;
 const editBookingFormSchema = z.object({
   title: z.string().min(1, 'Vui lòng nhập tiêu đề cuộc họp'),
   description: z.string().optional(),
-  roomId: z.coerce.number().min(1, 'Vui lòng chọn phòng họp'),
+  roomId: z.coerce.number({ message: 'Vui lòng chọn phòng họp' }).min(1, 'Vui lòng chọn phòng họp'),
   start: z.string().min(1, 'Vui lòng chọn thời gian bắt đầu'),
   end: z.string().min(1, 'Vui lòng chọn thời gian kết thúc'),
-  attendee: z.coerce.number().min(1, 'Số lượng tham gia tối thiểu là 1'),
-}).refine((data) => new Date(data.start) < new Date(data.end), {
-  message: "Thời gian kết thúc phải diễn ra sau thời gian bắt đầu",
-  path: ["end"]
+  attendee: z.coerce.number({ message: 'Vui lòng nhập một số hợp lệ' }).min(1, 'Số lượng tham gia tối thiểu là 1'),
+}).superRefine((data, ctx) => {
+  if (data.start && data.end) {
+    if (new Date(data.start) >= new Date(data.end)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Thời gian kết thúc phải diễn ra sau thời gian bắt đầu",
+        path: ["end"]
+      });
+    }
+    const startDatePart = data.start.split('T')[0];
+    const endDatePart = data.end.split('T')[0];
+    if (startDatePart !== endDatePart) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Thời gian họp không được kéo dài xuyên đêm (phải kết thúc trong cùng ngày bắt đầu)",
+        path: ["end"]
+      });
+    }
+    const startTimePart = data.start.split('T')[1];
+    const endTimePart = data.end.split('T')[1];
+    if (startTimePart < "08:00") {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Thời gian họp phải nằm trong giờ hành chính (từ 08:00 đến 17:30)",
+        path: ["start"]
+      });
+    }
+    if (endTimePart > "17:30") {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Thời gian họp phải nằm trong giờ hành chính (từ 08:00 đến 17:30)",
+        path: ["end"]
+      });
+    }
+  }
 });
 
 type EditBookingFormValues = z.infer<typeof editBookingFormSchema>;
@@ -496,7 +539,7 @@ export const Bookings: React.FC = () => {
       recurringFilterEndDate
     ],
     queryFn: async () => {
-      let url = `/recurring-pattern/filter?page=${recurringPage}&size=${recurringPageSize}`;
+      let url = `/recurring-pattern/filter?page=${recurringPage}&size=${recurringPageSize}&sort=createdAt,desc`;
       const params: string[] = [];
       if (recurringFilterStatus) params.push(`status=${recurringFilterStatus}`);
       if (recurringFilterType) params.push(`recurrenceType=${recurringFilterType}`);
@@ -2704,13 +2747,16 @@ export const Bookings: React.FC = () => {
                   <label className="form-label" htmlFor="book-attendees">Số người tham dự họp *</label>
                   <input
                     id="book-attendees"
-                    type="number"
-                    min={1}
-                    onKeyDown={preventNegativeNumber}
-                    onInput={normalizeNegativeNumber}
+                    type="text"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
                     className="form-control"
                     placeholder="8"
-                    {...register('attendee')}
+                    {...register('attendee', {
+                      onChange: (e) => {
+                        e.target.value = e.target.value.replace(/[^0-9]/g, '').replace(/^0+/, '');
+                      }
+                    })}
                   />
                   {errors.attendee && <span className="form-error">{errors.attendee.message}</span>}
                 </div>
@@ -2875,14 +2921,17 @@ export const Bookings: React.FC = () => {
                       </select>
 
                       <input
-                        type="number"
-                        min={1}
-                        onKeyDown={preventNegativeNumber}
-                        onInput={normalizeNegativeNumber}
+                        type="text"
+                        inputMode="numeric"
+                        pattern="[0-9]*"
                         className="form-control"
                         style={{ width: '80px' }}
                         placeholder="SL"
-                        {...register(`equipments.${index}.quantity` as const)}
+                        {...register(`equipments.${index}.quantity` as const, {
+                          onChange: (e) => {
+                            e.target.value = e.target.value.replace(/[^0-9]/g, '').replace(/^0+/, '');
+                          }
+                        })}
                       />
 
                       <button
@@ -3004,12 +3053,15 @@ export const Bookings: React.FC = () => {
                   <label className="form-label" htmlFor="recur-recurrence-interval">Tần suất lặp (mỗi N ngày/tuần) *</label>
                   <input
                     id="recur-recurrence-interval"
-                    type="number"
-                    min={1}
-                    onKeyDown={preventNegativeNumber}
-                    onInput={normalizeNegativeNumber}
+                    type="text"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
                     className="form-control"
-                    {...register('recurrenceInterval')}
+                    {...register('recurrenceInterval', {
+                      onChange: (e) => {
+                        e.target.value = e.target.value.replace(/[^0-9]/g, '').replace(/^0+/, '');
+                      }
+                    })}
                   />
                   {errors.recurrenceInterval && <span className="form-error">{errors.recurrenceInterval.message}</span>}
                 </div>
@@ -3110,13 +3162,16 @@ export const Bookings: React.FC = () => {
                   <label className="form-label" htmlFor="edit-attendees">Số người tham dự họp *</label>
                   <input
                     id="edit-attendees"
-                    type="number"
-                    min={1}
-                    onKeyDown={preventNegativeNumber}
-                    onInput={normalizeNegativeNumber}
+                    type="text"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
                     className="form-control"
                     placeholder="8"
-                    {...registerEdit('attendee')}
+                    {...registerEdit('attendee', {
+                      onChange: (e) => {
+                        e.target.value = e.target.value.replace(/[^0-9]/g, '').replace(/^0+/, '');
+                      }
+                    })}
                   />
                   {errorsEdit.attendee && <span className="form-error">{errorsEdit.attendee.message}</span>}
                 </div>
@@ -3651,13 +3706,14 @@ export const Bookings: React.FC = () => {
                         {/* Quantity input */}
                         {row.action !== 'DELETE' && (
                           <input
-                            type="number"
+                            type="text"
+                            inputMode="numeric"
+                            pattern="[0-9]*"
                             className="form-control"
                             style={{ width: '72px', flexShrink: 0, fontSize: '0.8rem', padding: '0.35rem 0.5rem' }}
                             placeholder="SL"
-                            min={1} onKeyDown={preventNegativeNumber}
                             value={row.quantity}
-                            onChange={e => { const val = e.target.value; setAddEquipRows(prev => prev.map((r, i) => i === idx ? { ...r, quantity: val === '' ? '' : (Number(val) > 0 ? Number(val) : 1) } : r)); }}
+                            onChange={e => { const val = e.target.value.replace(/[^0-9]/g, '').replace(/^0+/, ''); setAddEquipRows(prev => prev.map((r, i) => i === idx ? { ...r, quantity: val === '' ? '' : (Number(val) > 0 ? Number(val) : 1) } : r)); }}
                           />
                         )}
 
