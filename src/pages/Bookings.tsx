@@ -522,7 +522,7 @@ export const Bookings: React.FC = () => {
     queryKey: ['recurring-patterns', 'pending-count'],
     queryFn: async () => {
       if (!canApproveRecurring && !canViewAllRecurring) return 0;
-      const response = await apiClient.get('/recurring-pattern/all?page=0&size=1');
+      const response = await apiClient.get('/recurring-pattern/filter?status=PENDING&page=0&size=1');
       return response.data?.data?.totalElements || 0;
     },
     enabled: canApproveRecurring || canViewAllRecurring
