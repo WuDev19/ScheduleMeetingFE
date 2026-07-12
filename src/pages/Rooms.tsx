@@ -173,6 +173,7 @@ export const Rooms: React.FC = () => {
 
   const handleFloorChange = (val: string) => {
     setFilterFloor(val);
+    setKeyword('');
     if (val !== '') {
       setFilterStart('');
       setFilterEnd('');
@@ -181,6 +182,7 @@ export const Rooms: React.FC = () => {
 
   const handleCapacityChange = (val: string) => {
     setFilterCapacity(val);
+    setKeyword('');
     if (val !== '') {
       setFilterStart('');
       setFilterEnd('');
@@ -889,7 +891,17 @@ export const Rooms: React.FC = () => {
                 style={{ width: '100%', paddingLeft: '2.5rem' }}
                 placeholder="Tìm theo tên phòng họp..."
                 value={keyword}
-                onChange={(e) => { setKeyword(e.target.value); setRoomPage(0); }}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setKeyword(val);
+                  setRoomPage(0);
+                  if (val !== '') {
+                    setFilterFloor('');
+                    setFilterCapacity('');
+                    setFilterStart('');
+                    setFilterEnd('');
+                  }
+                }}
               />
             </div>
 
@@ -942,6 +954,7 @@ export const Rooms: React.FC = () => {
                 onChange={(e) => {
                   setFilterStart(e.target.value);
                   setRoomPage(0);
+                  setKeyword('');
                   if (e.target.value !== '') {
                     setFilterFloor('');
                     setFilterCapacity('');
@@ -960,6 +973,7 @@ export const Rooms: React.FC = () => {
                 onChange={(e) => {
                   setFilterEnd(e.target.value);
                   setRoomPage(0);
+                  setKeyword('');
                   if (e.target.value !== '') {
                     setFilterFloor('');
                     setFilterCapacity('');
