@@ -381,7 +381,7 @@ export const Profile: React.FC = () => {
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', fontSize: '0.85rem' }}>
                 <Building size={16} style={{ color: 'var(--text-tertiary)' }} />
-                <span>{userDetail?.department?.name || 'Phòng Nhân Sự'}</span>
+                <span>{userDetail?.department?.name || '(Chưa cập nhật)'}</span>
               </div>
             </div>
           </section>
