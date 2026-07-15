@@ -76,12 +76,15 @@ const bookingFormSchema = z.object({
   roomId: z.coerce.number({ message: 'Vui lòng chọn phòng họp' }).min(1, 'Vui lòng chọn phòng họp'),
   start: z.string().min(1, 'Vui lòng chọn thời gian bắt đầu'),
   end: z.string().min(1, 'Vui lòng chọn thời gian kết thúc'),
-  attendee: z.coerce.number({ message: 'Vui lòng nhập một số hợp lệ' }).min(1, 'Số lượng tham gia tối thiểu là 1'),
   receiversInput: z.string().optional(),
   equipments: z.array(z.object({
     equipmentId: z.coerce.number({ message: 'Chọn thiết bị' }).min(1, 'Chọn thiết bị'),
     quantity: z.coerce.number({ message: 'Vui lòng nhập một số hợp lệ' }).min(1, 'Số lượng tối thiểu là 1')
-  })).optional()
+  })).optional(),
+  departmentId: z.preprocess(
+    (val) => (val === '' || val === null || val === undefined || val === '0' ? undefined : val),
+    z.coerce.number().optional()
+  ),
 }).superRefine((data, ctx) => {
   if (data.start && data.end) {
     if (new Date(data.start) >= new Date(data.end)) {
@@ -320,6 +323,17 @@ export const Rooms: React.FC = () => {
   } = useForm<BookingFormValues>({
     resolver: zodResolver(bookingFormSchema) as any,
     defaultValues: { equipments: [] }
+  });
+
+
+
+  // Fetch Departments
+  const { data: departments } = useQuery({
+    queryKey: ['departments', 'dropdown'],
+    queryFn: async () => {
+      const response = await apiClient.get('/department/all?page=0&size=100');
+      return response.data?.data?.content || [];
+    }
   });
 
   const {
@@ -604,17 +618,21 @@ export const Rooms: React.FC = () => {
         ? data.receiversInput.split(',').map((e) => e.trim()).filter((e) => e.length > 0)
         : [];
 
-      const payload = {
+      const payload: any = {
         roomId: data.roomId,
         userId: user?.id || 1,
         title: data.title,
         description: data.description || '',
         start: startDateTime,
         end: endDateTime,
-        attendee: data.attendee,
         equipments: data.equipments || [],
-        receivers
       };
+
+      payload.receivers = receivers;
+
+      if (data.departmentId) {
+        payload.departmentId = Number(data.departmentId);
+      }
 
       await apiClient.post('/booking', payload);
     },
@@ -653,10 +671,10 @@ export const Rooms: React.FC = () => {
       roomId: room.id,
       start: '',
       end: '',
-      attendee: 1,
       receiversInput: '',
       equipments: []
     });
+
     setActiveModal('book');
   };
 
@@ -1751,33 +1769,13 @@ export const Rooms: React.FC = () => {
                 />
               </div>
 
-              <div className="grid-cols-2" style={{ gap: '1rem' }}>
-                <div className="form-group">
-                  <label className="form-label">Phòng họp được chọn</label>
-                  <input
-                    className="form-control"
-                    value={`${selectedRoom.roomName} (Tầng ${selectedRoom.floorNumber})`}
-                    disabled
-                  />
-                </div>
-
-                <div className="form-group">
-                  <label className="form-label" htmlFor="book-attendees">Số người tham dự họp *</label>
-                  <input
-                    id="book-attendees"
-                    type="text"
-                    inputMode="numeric"
-                    pattern="[0-9]*"
-                    className="form-control"
-                    placeholder="8"
-                    {...bookingRegister('attendee', {
-                      onChange: (e) => {
-                        e.target.value = e.target.value.replace(/[^0-9]/g, '').replace(/^0+/, '');
-                      }
-                    })}
-                  />
-                  {bookingErrors.attendee && <span className="form-error">{bookingErrors.attendee.message}</span>}
-                </div>
+              <div className="form-group">
+                <label className="form-label">Phòng họp được chọn</label>
+                <input
+                  className="form-control"
+                  value={`${selectedRoom.roomName} (Tầng ${selectedRoom.floorNumber})`}
+                  disabled
+                />
               </div>
 
               <div className="grid-cols-2" style={{ gap: '1rem' }}>
@@ -1804,9 +1802,24 @@ export const Rooms: React.FC = () => {
                 </div>
               </div>
 
+              {/* Department selection */}
+              <div className="form-group">
+                <label className="form-label" htmlFor="book-department" style={{ fontWeight: 600 }}>Mời theo phòng ban (Không bắt buộc)</label>
+                <select
+                  id="book-department"
+                  className="form-control"
+                  {...bookingRegister('departmentId')}
+                >
+                  <option value="">-- Chọn phòng ban --</option>
+                  {departments?.map((d: any) => (
+                    <option key={d.id} value={d.id}>{d.name} ({d.code})</option>
+                  ))}
+                </select>
+              </div>
+
               {/* Receivers emails invite */}
               <div className="form-group">
-                <label className="form-label" htmlFor="book-receivers">Mời đại biểu tham dự (Email cách nhau bởi dấu phẩy)</label>
+                <label className="form-label" htmlFor="book-receivers" style={{ fontWeight: 600 }}>Mời đại biểu tham dự qua Email (Email cách nhau bởi dấu phẩy, không bắt buộc)</label>
                 <div style={{ position: 'relative' }}>
                   <span style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-tertiary)' }}>
                     <Mail size={16} />

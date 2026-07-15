@@ -213,12 +213,15 @@ const bookingFormSchema = z.object({
   title: z.string().optional(),
   description: z.string().optional(),
   roomId: z.coerce.number({ message: 'Vui lòng chọn phòng họp' }).min(1, 'Vui lòng chọn phòng họp'),
-  attendee: z.coerce.number({ message: 'Vui lòng nhập một số hợp lệ' }).optional(),
   receiversInput: z.string().optional(), // Comma separated emails, will convert to receivers list
   equipments: z.array(z.object({
     equipmentId: z.coerce.number({ message: 'Chọn thiết bị' }).min(1, 'Chọn thiết bị'),
     quantity: z.coerce.number({ message: 'Vui lòng nhập một số hợp lệ' }).min(1, 'Số lượng tối thiểu là 1')
   })).optional(),
+  departmentId: z.preprocess(
+    (val) => (val === '' || val === null || val === undefined || val === '0' ? undefined : val),
+    z.coerce.number().optional()
+  ),
 
   // Single booking fields
   start: z.string().optional(),
@@ -247,13 +250,7 @@ const bookingFormSchema = z.object({
         path: ["title"]
       });
     }
-    if (data.attendee === undefined || isNaN(Number(data.attendee)) || Number(data.attendee) < 1) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: "Số lượng tham gia tối thiểu là 1",
-        path: ["attendee"]
-      });
-    }
+
     if (!data.start) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
@@ -370,7 +367,6 @@ const editBookingFormSchema = z.object({
   roomId: z.coerce.number({ message: 'Vui lòng chọn phòng họp' }).min(1, 'Vui lòng chọn phòng họp'),
   start: z.string().min(1, 'Vui lòng chọn thời gian bắt đầu'),
   end: z.string().min(1, 'Vui lòng chọn thời gian kết thúc'),
-  attendee: z.coerce.number({ message: 'Vui lòng nhập một số hợp lệ' }).min(1, 'Số lượng tham gia tối thiểu là 1'),
 }).superRefine((data, ctx) => {
   if (data.start && data.end) {
     if (new Date(data.start) >= new Date(data.end)) {
@@ -456,6 +452,8 @@ export const Bookings: React.FC = () => {
   const [notes, setNotes] = useState('');
   const [cancelReason, setCancelReason] = useState('');
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
+  const [addPartDeptId, setAddPartDeptId] = useState<number | undefined>(undefined);
+
 
   // Fetch pending approvals for Approver
   const { data: pendingApprovalsData, isLoading: isPendingApprovalsLoading } = useQuery({
@@ -585,6 +583,15 @@ export const Bookings: React.FC = () => {
     queryKey: ['equipments', 'dropdown'],
     queryFn: async () => {
       const response = await apiClient.get('/equipment/all?page=0&size=100');
+      return response.data?.data?.content || [];
+    }
+  });
+
+  // Fetch Departments
+  const { data: departments } = useQuery({
+    queryKey: ['departments', 'dropdown'],
+    queryFn: async () => {
+      const response = await apiClient.get('/department/all?page=0&size=100');
       return response.data?.data?.content || [];
     }
   });
@@ -786,7 +793,7 @@ export const Bookings: React.FC = () => {
           roomId: Number(data.roomId),
           title: data.title,
           description: data.description || '',
-          attendeeCount: Number(data.attendee) || 1
+          attendeeCount: 1
         };
 
         await apiClient.post('/recurring-pattern', payload);
@@ -798,16 +805,19 @@ export const Bookings: React.FC = () => {
           ? data.receiversInput.split(',').map((e) => e.trim()).filter((e) => e.length > 0)
           : [];
 
-        const payload = {
+        const payload: any = {
           roomId: data.roomId,
           title: data.title,
           description: data.description || '',
           start: startDateTime,
           end: endDateTime,
-          attendee: data.attendee,
           equipments: data.equipments || [],
-          receivers
+          receivers: receivers
         };
+
+        if (data.departmentId) {
+          payload.departmentId = Number(data.departmentId);
+        }
 
         await apiClient.post('/booking', payload);
       }
@@ -838,7 +848,6 @@ export const Bookings: React.FC = () => {
       const payload: {
         title: string;
         description: string;
-        attendeeCount: number;
         roomId?: number;
         start?: string;
         end?: string;
@@ -846,7 +855,6 @@ export const Bookings: React.FC = () => {
       } = {
         title: data.title,
         description: data.description || '',
-        attendeeCount: Number(data.attendee),
       };
 
       if (hasRoomChanged || hasTimeChanged) {
@@ -992,8 +1000,11 @@ export const Bookings: React.FC = () => {
 
   // ADD PARTICIPANTS MUTATION
   const addParticipantsMutation = useMutation({
-    mutationFn: async ({ bookingId, emails }: { bookingId: number; emails: string[] }) => {
-      await apiClient.patch(`/booking/${bookingId}/participants`, emails);
+    mutationFn: async ({ bookingId, departmentId, emails }: { bookingId: number; departmentId?: number; emails: string[] }) => {
+      await apiClient.patch(`/booking/${bookingId}/participants`, {
+        departmentId,
+        emails
+      });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['bookings'] });
@@ -1001,6 +1012,7 @@ export const Bookings: React.FC = () => {
       showToast('Đã gửi yêu cầu bổ sung người tham gia thành công', 'success');
       setActiveModal('detail');
       setParticipantsInput('');
+      setAddPartDeptId(undefined);
     },
     onError: (err: any) => {
       const msg = err.response?.data?.message || 'Có lỗi xảy ra khi bổ sung người tham gia';
@@ -2727,39 +2739,19 @@ export const Bookings: React.FC = () => {
                 />
               </div>
 
-              <div className="grid-cols-2" style={{ gap: '1rem' }}>
-                <div className="form-group">
-                  <label className="form-label" htmlFor="book-room">Chọn Phòng họp *</label>
-                  <select
-                    id="book-room"
-                    className="form-control"
-                    {...register('roomId')}
-                  >
-                    <option value="">-- Chọn phòng trống --</option>
-                    {rooms?.map((r: any) => (
-                      <option key={r.id} value={r.id}>{r.roomName} (Tầng {r.floorNumber} - {r.capacity} chỗ)</option>
-                    ))}
-                  </select>
-                  {errors.roomId && <span className="form-error">{errors.roomId.message}</span>}
-                </div>
-
-                <div className="form-group">
-                  <label className="form-label" htmlFor="book-attendees">Số người tham dự họp *</label>
-                  <input
-                    id="book-attendees"
-                    type="text"
-                    inputMode="numeric"
-                    pattern="[0-9]*"
-                    className="form-control"
-                    placeholder="8"
-                    {...register('attendee', {
-                      onChange: (e) => {
-                        e.target.value = e.target.value.replace(/[^0-9]/g, '').replace(/^0+/, '');
-                      }
-                    })}
-                  />
-                  {errors.attendee && <span className="form-error">{errors.attendee.message}</span>}
-                </div>
+              <div className="form-group">
+                <label className="form-label" htmlFor="book-room">Chọn Phòng họp *</label>
+                <select
+                  id="book-room"
+                  className="form-control"
+                  {...register('roomId')}
+                >
+                  <option value="">-- Chọn phòng trống --</option>
+                  {rooms?.map((r: any) => (
+                    <option key={r.id} value={r.id}>{r.roomName} (Tầng {r.floorNumber} - {r.capacity} chỗ)</option>
+                  ))}
+                </select>
+                {errors.roomId && <span className="form-error">{errors.roomId.message}</span>}
               </div>
 
               <div className="grid-cols-2" style={{ gap: '1rem' }}>
@@ -2786,9 +2778,24 @@ export const Bookings: React.FC = () => {
                 </div>
               </div>
 
+              {/* Department selection */}
+              <div className="form-group">
+                <label className="form-label" htmlFor="book-department" style={{ fontWeight: 600 }}>Mời theo phòng ban (Không bắt buộc)</label>
+                <select
+                  id="book-department"
+                  className="form-control"
+                  {...register('departmentId')}
+                >
+                  <option value="">-- Chọn phòng ban --</option>
+                  {departments?.map((d: any) => (
+                    <option key={d.id} value={d.id}>{d.name} ({d.code})</option>
+                  ))}
+                </select>
+              </div>
+
               {/* Receivers emails invite */}
               <div className="form-group" style={{ position: 'relative' }} ref={emailSuggestionsRef}>
-                <label className="form-label" htmlFor="book-receivers">Mời người tham dự (Email cách nhau bởi dấu phẩy)</label>
+                <label className="form-label" htmlFor="book-receivers" style={{ fontWeight: 600 }}>Mời cá nhân qua Email (Email cách nhau bởi dấu phẩy, không bắt buộc)</label>
                 <div style={{ position: 'relative' }}>
                   <span style={{ position: 'absolute', left: '12px', top: '10px', color: 'var(--text-tertiary)' }}>
                     <Mail size={16} />
@@ -3142,39 +3149,19 @@ export const Bookings: React.FC = () => {
                 />
               </div>
 
-              <div className="grid-cols-2" style={{ gap: '1rem' }}>
-                <div className="form-group">
-                  <label className="form-label" htmlFor="edit-room">Chọn Phòng họp *</label>
-                  <select
-                    id="edit-room"
-                    className="form-control"
-                    {...registerEdit('roomId')}
-                  >
-                    <option value="">-- Chọn phòng trống --</option>
-                    {rooms?.map((r: any) => (
-                      <option key={r.id} value={r.id}>{r.roomName} (Tầng {r.floorNumber} - {r.capacity} chỗ)</option>
-                    ))}
-                  </select>
-                  {errorsEdit.roomId && <span className="form-error">{errorsEdit.roomId.message}</span>}
-                </div>
-
-                <div className="form-group">
-                  <label className="form-label" htmlFor="edit-attendees">Số người tham dự họp *</label>
-                  <input
-                    id="edit-attendees"
-                    type="text"
-                    inputMode="numeric"
-                    pattern="[0-9]*"
-                    className="form-control"
-                    placeholder="8"
-                    {...registerEdit('attendee', {
-                      onChange: (e) => {
-                        e.target.value = e.target.value.replace(/[^0-9]/g, '').replace(/^0+/, '');
-                      }
-                    })}
-                  />
-                  {errorsEdit.attendee && <span className="form-error">{errorsEdit.attendee.message}</span>}
-                </div>
+              <div className="form-group">
+                <label className="form-label" htmlFor="edit-room">Chọn Phòng họp *</label>
+                <select
+                  id="edit-room"
+                  className="form-control"
+                  {...registerEdit('roomId')}
+                >
+                  <option value="">-- Chọn phòng trống --</option>
+                  {rooms?.map((r: any) => (
+                    <option key={r.id} value={r.id}>{r.roomName} (Tầng {r.floorNumber} - {r.capacity} chỗ)</option>
+                  ))}
+                </select>
+                {errorsEdit.roomId && <span className="form-error">{errorsEdit.roomId.message}</span>}
               </div>
 
               <div className="grid-cols-2" style={{ gap: '1rem' }}>
@@ -3525,7 +3512,6 @@ export const Bookings: React.FC = () => {
                                 roomId: selectedBooking.roomId,
                                 start: formatDateTimeLocal(selectedBooking.startTime),
                                 end: formatDateTimeLocal(selectedBooking.endTime),
-                                attendee: selectedBooking.attendee
                               });
                             }}
                           >
@@ -3795,7 +3781,7 @@ export const Bookings: React.FC = () => {
                 </div>
               </div>
               <button type="button" className="btn btn-ghost" style={{ padding: '4px', minWidth: 'auto' }}
-                onClick={() => { setActiveModal('detail'); setParticipantsInput(''); setShowEmailSuggestions(false); }}>
+                onClick={() => { setActiveModal('detail'); setParticipantsInput(''); setAddPartDeptId(undefined); setShowEmailSuggestions(false); }}>
                 <XCircle size={20} />
               </button>
             </div>
@@ -3814,9 +3800,25 @@ export const Bookings: React.FC = () => {
                 Mời thêm người tham dự hoặc đồng nghiệp tham gia vào cuộc họp này. Hệ thống sẽ gửi email xác nhận và thông báo đến từng người.
               </div>
 
+              {/* Department selection */}
+              <div className="form-group">
+                <label className="form-label" htmlFor="add-part-department" style={{ fontWeight: 600 }}>Mời theo phòng ban (Không bắt buộc)</label>
+                <select
+                  id="add-part-department"
+                  className="form-control"
+                  value={addPartDeptId || ''}
+                  onChange={(e) => setAddPartDeptId(e.target.value ? Number(e.target.value) : undefined)}
+                >
+                  <option value="">-- Chọn phòng ban --</option>
+                  {departments?.map((d: any) => (
+                    <option key={d.id} value={d.id}>{d.name} ({d.code})</option>
+                  ))}
+                </select>
+              </div>
+
               <div className="form-group" style={{ position: 'relative' }} ref={emailSuggestionsRef}>
-                <label className="form-label" htmlFor="add-receivers">
-                  Mời người tham dự (Email cách nhau bởi dấu phẩy)
+                <label className="form-label" htmlFor="add-receivers" style={{ fontWeight: 600 }}>
+                  Mời cá nhân qua Email (Email cách nhau bởi dấu phẩy, không bắt buộc)
                 </label>
                 <div style={{ position: 'relative' }}>
                   <span style={{ position: 'absolute', left: '12px', top: '10px', color: 'var(--text-tertiary)' }}>
@@ -3925,7 +3927,7 @@ export const Bookings: React.FC = () => {
 
             <div className="modal-footer">
               <button type="button" className="btn btn-secondary"
-                onClick={() => { setActiveModal('detail'); setParticipantsInput(''); setShowEmailSuggestions(false); }}>
+                onClick={() => { setActiveModal('detail'); setParticipantsInput(''); setAddPartDeptId(undefined); setShowEmailSuggestions(false); }}>
                 Quay lại
               </button>
               <button
@@ -3938,17 +3940,24 @@ export const Bookings: React.FC = () => {
                     .split(',')
                     .map(e => e.trim())
                     .filter(e => e.length > 0);
-                  if (emails.length === 0) {
-                    showToast('Vui lòng nhập ít nhất một email', 'error');
+                  
+                  if (!addPartDeptId && emails.length === 0) {
+                    showToast('Vui lòng chọn phòng ban hoặc nhập ít nhất một email', 'error');
                     return;
                   }
+
                   const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
                   const invalidEmails = emails.filter(e => !emailRegex.test(e));
                   if (invalidEmails.length > 0) {
                     showToast(`Email không hợp lệ: ${invalidEmails.join(', ')}`, 'error');
                     return;
                   }
-                  addParticipantsMutation.mutate({ bookingId: selectedBooking.id, emails });
+
+                  addParticipantsMutation.mutate({ 
+                    bookingId: selectedBooking.id, 
+                    departmentId: addPartDeptId,
+                    emails 
+                  });
                 }}
               >
                 <Users size={15} />
